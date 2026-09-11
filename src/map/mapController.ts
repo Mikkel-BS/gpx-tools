@@ -130,7 +130,10 @@ export class MapController {
     const center = view.getCenter();
     const resolution = view.getResolution();
     const mapSize = this.map.getSize();
-    if (!center || !resolution || !mapSize) return view.calculateExtent(mapSize);
+    if (!center || !resolution || !mapSize) {
+      const extent = view.calculateExtent(mapSize);
+      return [extent[0], extent[1], extent[2], extent[3]];
+    }
     const [frameWidth, frameHeight] = this.exportFramePixelSize ?? mapSize;
     const halfWidth = resolution * frameWidth / 2;
     const halfHeight = resolution * frameHeight / 2;
