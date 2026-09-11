@@ -5,6 +5,7 @@ import { parseGpx } from './gpx/parser';
 import { getTrackStats } from './gpx/stats';
 import { segmentsToCoordinateOnlyGpx, toCoordinateOnlyGpx } from './gpx/serialize';
 import { downloadText } from './export/download';
+import { initMapImageExportUi } from './export/ui';
 import { MapController, type MapLayerId } from './map/mapController';
 import { rasterProviders } from './map/sources/providers';
 import { cartographicPresets } from './map/styles/presets';
@@ -43,12 +44,14 @@ app.innerHTML = `
         <p class="hint">Styles affect the full composition: preferred basemap, raster tone/contrast, map background and GPX overlays. You can still override the basemap manually after choosing a style.</p>
       </section>
       <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p></section>
+      <section id="imageExportRoot"></section>
       <section id="ntr1Root"></section>
     </aside>
     <section class="map-panel"><div id="map"></div><div id="status" class="status">No tracks loaded</div></section>
   </main>`;
 
 const map = new MapController(document.querySelector<HTMLElement>('#map')!);
+initMapImageExportUi(document.querySelector<HTMLElement>('#imageExportRoot')!, { map });
 initNtr1Ui(document.querySelector<HTMLElement>('#ntr1Root')!, {
   getState: () => store.get(),
   addTrack: (track) => store.addTrack(track),
