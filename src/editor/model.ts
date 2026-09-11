@@ -14,6 +14,11 @@ export interface Discontinuity {
   distanceMeters: number;
 }
 
+export interface FlatIndexLocation {
+  segmentIndex: number;
+  pointIndex: number;
+}
+
 export function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
   return segments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) }));
 }
@@ -22,15 +27,58 @@ export function flattenTrack(track: GpxTrack): GpxPoint[] {
   return track.segments.flatMap((segment) => segment.points);
 }
 
+export function locateFlatIndex(track: GpxTrack, flatIndex: number): FlatIndexLocation | undefined {
+  let offset = 0;
+  for (let segmentIndex = 0; segmentIndex < track.segments.length; segmentIndex += 1) {
+    const count = track.segments[segmentIndex].points.length;
+    if (flatIndex >= offset && flatIndex < offset + count) {
+      return { segmentIndex, pointIndex: flatIndex - offset };
+    }
+    offset += count;
+  }
+  return undefined;
+}
+
+export function indicesShareSegment(track: GpxTrack, a: number, b: number): boolean {
+  const locationA = locateFlatIndex(track, a);
+  const locationB = locateFlatIndex(track, b);
+  return Boolean(locationA && locationB && locationA.segmentIndex === locationB.segmentIndex);
+}
+
+export function flatIndicesAreAdjacentInSegment(track: GpxTrack, a: number, b: number): boolean {
+  const locationA = locateFlatIndex(track, a);
+  const locationB = locateFlatIndex(track, b);
+  return Boolean(
+    locationA && locationB
+    && locationA.segmentIndex === locationB.segmentIndex
+    && Math.abs(locationA.pointIndex - locationB.pointIndex) === 1
+  );
+}
+
+function clampFlatIndex(track: GpxTrack, value: number): number {
+  const pointCount = flattenTrack(track).length;
+  return Math.max(0, Math.min(pointCount - 1, Math.round(value)));
+}
+
+function requireSingleSegmentRange(track: GpxTrack, start: number, end: number, operation: string): void {
+  if (!indicesShareSegment(track, start, end)) {
+    throw new Error(`${operation} cannot cross a GPX track-segment boundary. Select points within one segment.`);
+  }
+}
+
 export function trimTrack(track: GpxTrack, startIndex: number, endIndex: number): GpxTrack {
   const points = flattenTrack(track);
   if (points.length < 2) throw new Error('Track must contain at least two points.');
-  const start = Math.max(0, Math.min(points.length - 1, Math.round(startIndex)));
-  const end = Math.max(0, Math.min(points.length - 1, Math.round(endIndex)));
-  const lo = Math.min(start, end);
-  const hi = Math.max(start, end);
-  if (lo === hi) throw new Error('Trim selection must contain at least two points.');
-  return { ...track, segments: [{ points: points.slice(lo, hi + 1).map((point) => ({ ...point })) }] };
+  const start = clampFlatIndex(track, startIndex);
+  const end = clampFlatIndex(track, endIndex);
+  if (start === end) throw new Error('Trim selection must contain at least two points.');
+  requireSingleSegmentRange(track, start, end, 'Trim');
+  const startLocation = locateFlatIndex(track, start)!;
+  const endLocation = locateFlatIndex(track, end)!;
+  const lo = Math.min(startLocation.pointIndex, endLocation.pointIndex);
+  const hi = Math.max(startLocation.pointIndex, endLocation.pointIndex);
+  const sourceSegment = track.segments[startLocation.segmentIndex];
+  return { ...track, segments: [{ points: sourceSegment.points.slice(lo, hi + 1).map((point) => ({ ...point })) }] };
 }
 
 export function resetTrack(track: GpxTrack): GpxTrack {
@@ -40,9 +88,10 @@ export function resetTrack(track: GpxTrack): GpxTrack {
 export function createPiece(track: GpxTrack, startIndex: number, endIndex: number): RoutePiece {
   const points = flattenTrack(track);
   if (points.length < 2) throw new Error('Track must contain at least two points.');
-  const start = Math.max(0, Math.min(points.length - 1, Math.round(startIndex)));
-  const end = Math.max(0, Math.min(points.length - 1, Math.round(endIndex)));
+  const start = clampFlatIndex(track, startIndex);
+  const end = clampFlatIndex(track, endIndex);
   if (start === end) throw new Error('A route piece must contain at least two points.');
+  requireSingleSegmentRange(track, start, end, 'Route piece');
   return {
     id: crypto.randomUUID(),
     trackId: track.id,
@@ -54,7 +103,7 @@ export function createPiece(track: GpxTrack, startIndex: number, endIndex: numbe
 
 export function getPiecePoints(piece: RoutePiece, tracks: GpxTrack[]): GpxPoint[] {
   const track = tracks.find((item) => item.id === piece.trackId);
-  if (!track) return [];
+  if (!track || !indicesShareSegment(track, piece.startIndex, piece.endIndex)) return [];
   const points = flattenTrack(track).slice(piece.startIndex, piece.endIndex + 1);
   return piece.reversed ? [...points].reverse() : points;
 }
