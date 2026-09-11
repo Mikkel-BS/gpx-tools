@@ -17,12 +17,12 @@ import type { GpxTrack } from '../gpx/types';
 import { getRasterProvider, rasterProviders } from './sources/providers';
 import { getCartographicPreset, type CartographicStylePreset } from './styles/presets';
 
-const palette = ['#d33f49', '#3568d4', '#31855b', '#8b4fb3'];
 type SelectionHandle = 'start' | 'end';
 export type MapLayerId = 'base' | 'tracks' | 'combined' | 'selection';
 
 export class MapController {
   private map: Map;
+  private target: HTMLElement;
   private trackLayer: VectorLayer<VectorSource>;
   private selectionLayer: VectorLayer<VectorSource>;
   private compositeLayer: VectorLayer<VectorSource>;
@@ -32,11 +32,12 @@ export class MapController {
   private selectionChangeHandler?: (handle: SelectionHandle, index: number) => void;
   private trackSignature = '';
   private preset: CartographicStylePreset = getCartographicPreset('book-light');
+  private baseProviderId = rasterProviders[0].id;
 
   constructor(target: HTMLElement) {
-    const provider = rasterProviders[0];
+    this.target = target;
     this.baseLayer = new TileLayer({
-      source: this.makeRasterSource(provider.id),
+      source: this.makeRasterSource(this.baseProviderId),
       zIndex: 0,
     });
     this.trackLayer = new VectorLayer({ source: new VectorSource(), zIndex: 10 });
@@ -46,6 +47,15 @@ export class MapController {
       target,
       layers: [this.baseLayer, this.trackLayer, this.compositeLayer, this.selectionLayer],
       view: new View({ center: fromLonLat([10.75, 59.91]), zoom: 8 }),
+    });
+
+    this.baseLayer.on('prerender', (event) => {
+      const context = event.context;
+      if (context instanceof CanvasRenderingContext2D) context.filter = this.preset.baseFilter;
+    });
+    this.baseLayer.on('postrender', (event) => {
+      const context = event.context;
+      if (context instanceof CanvasRenderingContext2D) context.filter = 'none';
     });
 
     const translate = new Translate({
@@ -62,6 +72,7 @@ export class MapController {
       this.selectionChangeHandler?.(handle, index);
     });
     this.map.addInteraction(translate);
+    this.applyPresetComposition();
   }
 
   onSelectionChange(handler: (handle: SelectionHandle, index: number) => void): void {
@@ -69,7 +80,10 @@ export class MapController {
   }
 
   setBaseProvider(providerId: string): void {
-    this.baseLayer.setSource(this.makeRasterSource(providerId));
+    const provider = getRasterProvider(providerId);
+    this.baseProviderId = provider.id;
+    this.baseLayer.setSource(this.makeRasterSource(provider.id));
+    this.baseLayer.changed();
   }
 
   setLayerVisibility(layerId: MapLayerId, visible: boolean): void {
@@ -80,11 +94,16 @@ export class MapController {
     this.getLayer(layerId).setOpacity(Math.max(0, Math.min(1, opacity)));
   }
 
-  setStylePreset(presetId: string): void {
+  setStylePreset(presetId: string): CartographicStylePreset {
     this.preset = getCartographicPreset(presetId);
+    if (this.baseProviderId !== this.preset.preferredBaseProviderId) {
+      this.setBaseProvider(this.preset.preferredBaseProviderId);
+    }
+    this.applyPresetComposition();
     this.restyleTracks();
     this.restyleComposite();
     this.restyleSelection();
+    return this.preset;
   }
 
   setTracks(tracks: GpxTrack[], selectedTrackId?: string): void {
@@ -157,6 +176,11 @@ export class MapController {
     this.restyleComposite();
   }
 
+  private applyPresetComposition(): void {
+    this.target.style.background = this.preset.mapBackground;
+    this.baseLayer.changed();
+  }
+
   private makeRasterSource(providerId: string): XYZ {
     const provider = getRasterProvider(providerId);
     return new XYZ({
@@ -180,7 +204,8 @@ export class MapController {
     for (const feature of source.getFeatures()) {
       const index = Number(feature.get('paletteIndex') ?? 0);
       const selected = Boolean(feature.get('selectedTrack'));
-      const color = palette[index % palette.length];
+      const colors = this.preset.trackColors.length ? this.preset.trackColors : ['#444444'];
+      const color = colors[index % colors.length];
       feature.setStyle(new Style({
         stroke: new Stroke({
           color: this.withOpacity(color, this.preset.trackOpacity),
