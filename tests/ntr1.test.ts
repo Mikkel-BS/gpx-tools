@@ -102,7 +102,7 @@ describe('NTR1 codec', () => {
   });
 
   it('preserves legal spaces inside the exact-length Base45 body', () => {
-    const bytes = new Uint8Array([61, 0]);
+    const bytes = new Uint8Array([0, 36]);
     const encoded = encodeBase45(bytes);
     expect(encoded).toContain(' ');
     expect(decodeBase45(encoded)).toEqual(bytes);
