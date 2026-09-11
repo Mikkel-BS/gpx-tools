@@ -3,7 +3,7 @@ import './styles.css';
 import { buildComposite, createPiece, detectDiscontinuities, flattenTrack, getPiecePoints } from './editor/model';
 import { parseGpx } from './gpx/parser';
 import { getTrackStats } from './gpx/stats';
-import { pointsToCoordinateOnlyGpx, toCoordinateOnlyGpx } from './gpx/serialize';
+import { segmentsToCoordinateOnlyGpx, toCoordinateOnlyGpx } from './gpx/serialize';
 import { downloadText } from './export/download';
 import { MapController } from './map/mapController';
 import { store } from './state/store';
@@ -14,9 +14,17 @@ app.innerHTML = `
     <aside class="sidebar">
       <header><div class="eyebrow">LOCAL · CLIENT-SIDE</div><h1>GPX & Map Tool</h1><p>Edit and compose GPX tracks without uploading them.</p></header>
       <section><h2>Tracks</h2><label class="import"><input id="fileInput" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" multiple><span>Import GPX files</span></label><p class="hint">Up to four files.</p><div id="trackList"></div></section>
-      <section id="selectionSection"><h2>Select subsection</h2><div class="range-grid"><label>Start point<input id="startIndex" type="number" min="0" step="1" value="0"></label><label>End point<input id="endIndex" type="number" min="0" step="1" value="0"></label></div><button id="addPiece" class="primary" disabled>Add section to route</button><p id="selectionHint" class="hint">Select a track first.</p></section>
+      <section id="selectionSection">
+        <h2>Edit selected track</h2>
+        <p class="selection-instruction"><span class="handle-dot start"></span>Drag the green start handle and <span class="handle-dot end"></span>red end handle on the map.</p>
+        <div class="range-grid"><label>Start point<input id="startIndex" type="number" min="0" step="1" value="0"></label><label>End point<input id="endIndex" type="number" min="0" step="1" value="0"></label></div>
+        <p id="selectionHint" class="hint">Select a track first.</p>
+        <div class="button-row"><button id="trimTrack" class="secondary" disabled>Trim to selection</button><button id="resetTrack" class="secondary" disabled>Reset track</button></div>
+        <button id="addPiece" class="primary" disabled>Add selection to combined route</button>
+        <p class="hint">Trimming changes only the in-browser working copy. The imported original is retained for reset.</p>
+      </section>
       <section><div class="section-title"><h2>Combined route</h2><div class="history"><button id="undo" title="Undo" disabled>↶</button><button id="redo" title="Redo" disabled>↷</button></div></div><div id="pieceList"></div><div id="discontinuities" class="warnings"></div><button id="clearPieces" class="secondary" disabled>Clear route</button></section>
-      <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Exports valid GPX with latitude/longitude only; source files remain unchanged.</p></section>
+      <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p></section>
     </aside>
     <section class="map-panel"><div id="map"></div><div id="status" class="status">No tracks loaded</div></section>
   </main>`;
@@ -28,6 +36,8 @@ const pieceList = document.querySelector<HTMLDivElement>('#pieceList')!;
 const startInput = document.querySelector<HTMLInputElement>('#startIndex')!;
 const endInput = document.querySelector<HTMLInputElement>('#endIndex')!;
 const addPieceBtn = document.querySelector<HTMLButtonElement>('#addPiece')!;
+const trimTrackBtn = document.querySelector<HTMLButtonElement>('#trimTrack')!;
+const resetTrackBtn = document.querySelector<HTMLButtonElement>('#resetTrack')!;
 const selectionHint = document.querySelector<HTMLParagraphElement>('#selectionHint')!;
 const cleanExportBtn = document.querySelector<HTMLButtonElement>('#cleanExport')!;
 const routeExportBtn = document.querySelector<HTMLButtonElement>('#routeExport')!;
@@ -51,16 +61,37 @@ input.addEventListener('change', async () => {
   input.value = '';
 });
 
+const updateSelectionFromInputs = () => store.setSelection(Number(startInput.value), Number(endInput.value));
+startInput.addEventListener('change', updateSelectionFromInputs);
+endInput.addEventListener('change', updateSelectionFromInputs);
+
+map.onSelectionChange((handle, index) => {
+  const selection = store.get().selection;
+  if (!selection) return;
+  if (handle === 'start') store.setSelection(index, selection.endIndex);
+  else store.setSelection(selection.startIndex, index);
+});
+
 addPieceBtn.addEventListener('click', () => {
   const state = store.get();
   const track = state.tracks.find((item) => item.id === state.selectedTrackId);
-  if (!track) return;
+  const selection = state.selection;
+  if (!track || !selection) return;
   try {
-    store.addPiece(createPiece(track, Number(startInput.value), Number(endInput.value)));
+    store.addPiece(createPiece(track, selection.startIndex, selection.endIndex));
   } catch (error) {
     alert(error instanceof Error ? error.message : String(error));
   }
 });
+
+trimTrackBtn.addEventListener('click', () => {
+  try {
+    store.trimSelectedTrack();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : String(error));
+  }
+});
+resetTrackBtn.addEventListener('click', () => store.resetSelectedTrack());
 
 cleanExportBtn.addEventListener('click', () => {
   const state = store.get();
@@ -72,9 +103,11 @@ cleanExportBtn.addEventListener('click', () => {
 
 routeExportBtn.addEventListener('click', () => {
   const state = store.get();
-  const points = buildComposite(state.pieces, state.tracks);
-  if (points.length < 2) return;
-  downloadText('combined-route.gpx', pointsToCoordinateOnlyGpx(points));
+  const segments = state.pieces
+    .map((piece) => ({ points: getPiecePoints(piece, state.tracks) }))
+    .filter((segment) => segment.points.length >= 2);
+  if (!segments.length) return;
+  downloadText('combined-route.gpx', segmentsToCoordinateOnlyGpx(segments));
 });
 
 clearPiecesBtn.addEventListener('click', () => store.clearPieces());
@@ -83,24 +116,32 @@ redoBtn.addEventListener('click', () => store.redo());
 
 store.subscribe((state) => {
   const selectedTrack = state.tracks.find((track) => track.id === state.selectedTrackId);
+  const selection = state.selection?.trackId === selectedTrack?.id ? state.selection : undefined;
   const composite = buildComposite(state.pieces, state.tracks);
   map.setTracks(state.tracks, state.selectedTrackId);
-  map.setComposite(composite);
+  map.setComposite(state.pieces, state.tracks, state.selectedPieceId);
+  map.setSelection(selectedTrack, selection?.startIndex ?? 0, selection?.endIndex ?? 0);
 
   cleanExportBtn.disabled = !selectedTrack;
   routeExportBtn.disabled = composite.length < 2;
   clearPiecesBtn.disabled = state.pieces.length === 0;
   undoBtn.disabled = !store.canUndo();
   redoBtn.disabled = !store.canRedo();
-  addPieceBtn.disabled = !selectedTrack;
+  addPieceBtn.disabled = !selectedTrack || !selection || selection.startIndex === selection.endIndex;
+  trimTrackBtn.disabled = !selectedTrack || !selection || selection.startIndex === selection.endIndex;
+  resetTrackBtn.disabled = !selectedTrack || !selectedTrack.originalSegments;
 
-  if (selectedTrack) {
+  if (selectedTrack && selection) {
     const pointCount = flattenTrack(selectedTrack).length;
     startInput.max = String(Math.max(0, pointCount - 1));
     endInput.max = String(Math.max(0, pointCount - 1));
-    if (Number(endInput.value) <= 0 || Number(endInput.value) >= pointCount) endInput.value = String(Math.max(0, pointCount - 1));
-    selectionHint.textContent = `${pointCount.toLocaleString()} points · indexes 0–${Math.max(0, pointCount - 1).toLocaleString()}`;
+    startInput.value = String(selection.startIndex);
+    endInput.value = String(selection.endIndex);
+    const selectedCount = Math.abs(selection.endIndex - selection.startIndex) + 1;
+    selectionHint.textContent = `${selectedCount.toLocaleString()} of ${pointCount.toLocaleString()} points selected${selection.startIndex > selection.endIndex ? ' · route piece will be reversed' : ''}.`;
   } else {
+    startInput.value = '0';
+    endInput.value = '0';
     selectionHint.textContent = 'Select a track first.';
   }
 
@@ -110,6 +151,8 @@ store.subscribe((state) => {
 
   list.replaceChildren(...state.tracks.map((track) => {
     const stats = getTrackStats(track);
+    const originalPoints = track.originalSegments.reduce((sum, segment) => sum + segment.points.length, 0);
+    const isTrimmed = stats.points !== originalPoints;
     const card = document.createElement('div');
     card.className = `track-card ${track.id === state.selectedTrackId ? 'selected' : ''}`;
     const main = document.createElement('button');
@@ -117,9 +160,9 @@ store.subscribe((state) => {
     const strong = document.createElement('strong');
     strong.textContent = track.fileName;
     const meta = document.createElement('span');
-    meta.textContent = `${stats.points.toLocaleString()} pts · ${(stats.distanceMeters / 1000).toFixed(1)} km · ${stats.segments} seg`;
+    meta.textContent = `${stats.points.toLocaleString()} pts · ${(stats.distanceMeters / 1000).toFixed(1)} km · ${stats.segments} seg${isTrimmed ? ' · trimmed' : ''}`;
     main.append(strong, meta);
-    main.onclick = () => store.set({ selectedTrackId: track.id });
+    main.onclick = () => store.setSelectedTrack(track.id);
     const remove = document.createElement('button');
     remove.className = 'remove';
     remove.textContent = '×';
@@ -133,7 +176,8 @@ store.subscribe((state) => {
     const track = state.tracks.find((item) => item.id === piece.trackId);
     const count = getPiecePoints(piece, state.tracks).length;
     const card = document.createElement('div');
-    card.className = 'piece-card';
+    card.className = `piece-card ${piece.id === state.selectedPieceId ? 'selected' : ''}`;
+    card.onclick = () => store.selectPiece(piece.id);
     const info = document.createElement('div');
     info.className = 'piece-info';
     const title = document.createElement('strong');
@@ -143,6 +187,7 @@ store.subscribe((state) => {
     info.append(title, meta);
     const controls = document.createElement('div');
     controls.className = 'piece-controls';
+    controls.onclick = (event) => event.stopPropagation();
     const makeButton = (label: string, titleText: string, action: () => void, disabled = false) => {
       const button = document.createElement('button');
       button.textContent = label;
