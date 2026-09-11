@@ -1,3 +1,4 @@
+import './styles.css';
 import type { MapController } from '../map/mapController';
 import { getRasterProvider } from '../map/sources/providers';
 import { downloadBlob, canvasToPngBlob } from './image';
