@@ -5,10 +5,11 @@ import VectorLayer from 'ol/layer/Vector.js';
 import XYZ from 'ol/source/XYZ.js';
 import VectorSource from 'ol/source/Vector.js';
 import Feature from 'ol/Feature.js';
+import LineString from 'ol/geom/LineString.js';
 import MultiLineString from 'ol/geom/MultiLineString.js';
 import { fromLonLat } from 'ol/proj.js';
 import { Stroke, Style } from 'ol/style.js';
-import type { GpxTrack } from '../gpx/types';
+import type { GpxPoint, GpxTrack } from '../gpx/types';
 import { rasterProviders } from './sources/providers';
 
 const palette = ['#d33f49', '#3568d4', '#31855b', '#8b4fb3'];
@@ -16,6 +17,7 @@ const palette = ['#d33f49', '#3568d4', '#31855b', '#8b4fb3'];
 export class MapController {
   private map: Map;
   private trackLayer: VectorLayer<VectorSource>;
+  private compositeLayer: VectorLayer<VectorSource>;
   private baseLayer: TileLayer<XYZ>;
 
   constructor(target: HTMLElement) {
@@ -24,9 +26,10 @@ export class MapController {
       source: new XYZ({ url: provider.url, attributions: provider.attribution, maxZoom: provider.maxZoom }),
     });
     this.trackLayer = new VectorLayer({ source: new VectorSource() });
+    this.compositeLayer = new VectorLayer({ source: new VectorSource(), zIndex: 20 });
     this.map = new Map({
       target,
-      layers: [this.baseLayer, this.trackLayer],
+      layers: [this.baseLayer, this.trackLayer, this.compositeLayer],
       view: new View({ center: fromLonLat([10.75, 59.91]), zoom: 8 }),
     });
   }
@@ -50,5 +53,15 @@ export class MapController {
         this.map.getView().fit(extent, { padding: [50, 50, 50, 50], maxZoom: 15, duration: 250 });
       }
     }
+  }
+
+  setComposite(points: GpxPoint[]): void {
+    const source = this.compositeLayer.getSource();
+    if (!source) return;
+    source.clear();
+    if (points.length < 2) return;
+    const feature = new Feature(new LineString(points.map((point) => fromLonLat([point.lon, point.lat]))));
+    feature.setStyle(new Style({ stroke: new Stroke({ color: '#151515', width: 7 }) }));
+    source.addFeature(feature);
   }
 }
