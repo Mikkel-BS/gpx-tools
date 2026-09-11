@@ -39,7 +39,7 @@ app.innerHTML = `
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="combined" checked><span>Combined route</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="combined" aria-label="Combined route opacity"></div>
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="selection" checked><span>Selection/edit handles</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="selection" aria-label="Selection opacity"></div>
         </div>
-        <p class="hint">Map sources are configured separately from overlays. Style presets currently affect GPX/project overlays; raster basemap cartography remains provider-defined.</p>
+        <p class="hint">Styles now affect the full composition: preferred basemap, raster tone/contrast, map background and GPX overlays. You can still override the basemap manually after choosing a style.</p>
       </section>
       <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p></section>
     </aside>
@@ -66,6 +66,9 @@ const status = document.querySelector<HTMLDivElement>('#status')!;
 const baseMapSelect = document.querySelector<HTMLSelectElement>('#baseMap')!;
 const stylePresetSelect = document.querySelector<HTMLSelectElement>('#stylePreset')!;
 
+const initialPreset = map.setStylePreset(stylePresetSelect.value);
+baseMapSelect.value = initialPreset.preferredBaseProviderId;
+
 input.addEventListener('change', async () => {
   const files = Array.from(input.files ?? []);
   for (const file of files) {
@@ -81,7 +84,10 @@ input.addEventListener('change', async () => {
 });
 
 baseMapSelect.addEventListener('change', () => map.setBaseProvider(baseMapSelect.value));
-stylePresetSelect.addEventListener('change', () => map.setStylePreset(stylePresetSelect.value));
+stylePresetSelect.addEventListener('change', () => {
+  const preset = map.setStylePreset(stylePresetSelect.value);
+  baseMapSelect.value = preset.preferredBaseProviderId;
+});
 
 document.querySelectorAll<HTMLInputElement>('[data-layer-visible]').forEach((checkbox) => {
   checkbox.addEventListener('change', () => {
