@@ -12,8 +12,8 @@ import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat } from 'ol/proj.js';
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style.js';
 import type { Coordinate } from 'ol/coordinate.js';
-import { flattenTrack, getPiecePoints, type RoutePiece } from '../editor/model';
-import type { GpxTrack } from '../gpx/types';
+import { flattenTrack, getPiecePoints, indicesShareSegment, type RoutePiece } from '../editor/model';
+import type { GpxPoint, GpxTrack } from '../gpx/types';
 import { getRasterProvider, rasterProviders } from './sources/providers';
 import { getCartographicPreset, type CartographicStylePreset } from './styles/presets';
 
@@ -26,6 +26,7 @@ export class MapController {
   private trackLayer: VectorLayer<VectorSource>;
   private selectionLayer: VectorLayer<VectorSource>;
   private compositeLayer: VectorLayer<VectorSource>;
+  private ntr1PreviewLayer: VectorLayer<VectorSource>;
   private baseLayer: TileLayer<XYZ>;
   private selectionTrack?: GpxTrack;
   private selectionProjected: Coordinate[] = [];
@@ -42,10 +43,11 @@ export class MapController {
     });
     this.trackLayer = new VectorLayer({ source: new VectorSource(), zIndex: 10 });
     this.compositeLayer = new VectorLayer({ source: new VectorSource(), zIndex: 20 });
+    this.ntr1PreviewLayer = new VectorLayer({ source: new VectorSource(), zIndex: 25 });
     this.selectionLayer = new VectorLayer({ source: new VectorSource(), zIndex: 30 });
     this.map = new Map({
       target,
-      layers: [this.baseLayer, this.trackLayer, this.compositeLayer, this.selectionLayer],
+      layers: [this.baseLayer, this.trackLayer, this.compositeLayer, this.ntr1PreviewLayer, this.selectionLayer],
       view: new View({ center: fromLonLat([10.75, 59.91]), zoom: 8 }),
     });
 
@@ -146,7 +148,7 @@ export class MapController {
     const lo = Math.min(start, end);
     const hi = Math.max(start, end);
 
-    if (hi > lo) {
+    if (hi > lo && indicesShareSegment(track, start, end)) {
       const halo = new Feature(new LineString(this.selectionProjected.slice(lo, hi + 1)));
       halo.set('selectionRole', 'halo');
       const inner = new Feature(new LineString(this.selectionProjected.slice(lo, hi + 1)));
@@ -174,6 +176,18 @@ export class MapController {
       source.addFeature(feature);
     }
     this.restyleComposite();
+  }
+
+  setNtr1Preview(points?: GpxPoint[]): void {
+    const source = this.ntr1PreviewLayer.getSource();
+    if (!source) return;
+    source.clear();
+    if (!points || points.length < 2) return;
+    const feature = new Feature(new LineString(points.map((point) => fromLonLat([point.lon, point.lat]))));
+    feature.setStyle(new Style({
+      stroke: new Stroke({ color: '#008a9a', width: 4, lineDash: [10, 7] }),
+    }));
+    source.addFeature(feature);
   }
 
   private applyPresetComposition(): void {
