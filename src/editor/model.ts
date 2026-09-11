@@ -1,4 +1,4 @@
-import type { GpxPoint, GpxTrack } from '../gpx/types';
+import type { GpxPoint, GpxSegment, GpxTrack } from '../gpx/types';
 
 export interface RoutePiece {
   id: string;
@@ -14,8 +14,27 @@ export interface Discontinuity {
   distanceMeters: number;
 }
 
+export function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
+  return segments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) }));
+}
+
 export function flattenTrack(track: GpxTrack): GpxPoint[] {
   return track.segments.flatMap((segment) => segment.points);
+}
+
+export function trimTrack(track: GpxTrack, startIndex: number, endIndex: number): GpxTrack {
+  const points = flattenTrack(track);
+  if (points.length < 2) throw new Error('Track must contain at least two points.');
+  const start = Math.max(0, Math.min(points.length - 1, Math.round(startIndex)));
+  const end = Math.max(0, Math.min(points.length - 1, Math.round(endIndex)));
+  const lo = Math.min(start, end);
+  const hi = Math.max(start, end);
+  if (lo === hi) throw new Error('Trim selection must contain at least two points.');
+  return { ...track, segments: [{ points: points.slice(lo, hi + 1).map((point) => ({ ...point })) }] };
+}
+
+export function resetTrack(track: GpxTrack): GpxTrack {
+  return { ...track, segments: cloneSegments(track.originalSegments) };
 }
 
 export function createPiece(track: GpxTrack, startIndex: number, endIndex: number): RoutePiece {
@@ -37,7 +56,7 @@ export function getPiecePoints(piece: RoutePiece, tracks: GpxTrack[]): GpxPoint[
   const track = tracks.find((item) => item.id === piece.trackId);
   if (!track) return [];
   const points = flattenTrack(track).slice(piece.startIndex, piece.endIndex + 1);
-  return piece.reversed ? points.reverse() : points;
+  return piece.reversed ? [...points].reverse() : points;
 }
 
 export function buildComposite(pieces: RoutePiece[], tracks: GpxTrack[]): GpxPoint[] {
