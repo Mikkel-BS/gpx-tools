@@ -34,6 +34,10 @@ export class MapController {
   private trackSignature = '';
   private preset: CartographicStylePreset = getCartographicPreset('book-light');
   private baseProviderId = rasterProviders[0].id;
+  private exportFrame: HTMLDivElement;
+  private exportFrameAspect?: number;
+  private exportFramePixelSize?: [number, number];
+  private resizeObserver?: ResizeObserver;
 
   constructor(target: HTMLElement) {
     this.target = target;
@@ -50,6 +54,15 @@ export class MapController {
       layers: [this.baseLayer, this.trackLayer, this.compositeLayer, this.ntr1PreviewLayer, this.selectionLayer],
       view: new View({ center: fromLonLat([10.75, 59.91]), zoom: 8 }),
     });
+
+    this.exportFrame = document.createElement('div');
+    this.exportFrame.className = 'map-export-frame';
+    this.exportFrame.hidden = true;
+    this.target.append(this.exportFrame);
+    if ('ResizeObserver' in window) {
+      this.resizeObserver = new ResizeObserver(() => this.updateExportFrame());
+      this.resizeObserver.observe(this.target);
+    }
 
     this.baseLayer.on('prerender', (event) => {
       const context = event.context;
@@ -88,12 +101,40 @@ export class MapController {
     this.baseLayer.changed();
   }
 
+  getBaseProviderId(): string { return this.baseProviderId; }
+  getMapForExport(): Map { return this.map; }
+
   setLayerVisibility(layerId: MapLayerId, visible: boolean): void {
     this.getLayer(layerId).setVisible(visible);
   }
 
+  getLayerVisibility(layerId: MapLayerId): boolean {
+    return this.getLayer(layerId).getVisible();
+  }
+
   setLayerOpacity(layerId: MapLayerId, opacity: number): void {
     this.getLayer(layerId).setOpacity(Math.max(0, Math.min(1, opacity)));
+  }
+
+  setExportFrameAspect(aspect?: number): void {
+    this.exportFrameAspect = aspect && Number.isFinite(aspect) && aspect > 0 ? aspect : undefined;
+    this.updateExportFrame();
+  }
+
+  getExportFrameExtent(aspect: number): [number, number, number, number] {
+    if (this.exportFrameAspect !== aspect || !this.exportFramePixelSize) {
+      this.exportFrameAspect = aspect;
+      this.updateExportFrame();
+    }
+    const view = this.map.getView();
+    const center = view.getCenter();
+    const resolution = view.getResolution();
+    const mapSize = this.map.getSize();
+    if (!center || !resolution || !mapSize) return view.calculateExtent(mapSize);
+    const [frameWidth, frameHeight] = this.exportFramePixelSize ?? mapSize;
+    const halfWidth = resolution * frameWidth / 2;
+    const halfHeight = resolution * frameHeight / 2;
+    return [center[0] - halfWidth, center[1] - halfHeight, center[0] + halfWidth, center[1] + halfHeight];
   }
 
   setStylePreset(presetId: string): CartographicStylePreset {
@@ -188,6 +229,29 @@ export class MapController {
       stroke: new Stroke({ color: '#008a9a', width: 4, lineDash: [10, 7] }),
     }));
     source.addFeature(feature);
+  }
+
+  private updateExportFrame(): void {
+    const aspect = this.exportFrameAspect;
+    if (!aspect) {
+      this.exportFrame.hidden = true;
+      this.exportFramePixelSize = undefined;
+      return;
+    }
+    const rect = this.target.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const maxWidth = rect.width * 0.84;
+    const maxHeight = rect.height * 0.84;
+    let width = maxWidth;
+    let height = width / aspect;
+    if (height > maxHeight) {
+      height = maxHeight;
+      width = height * aspect;
+    }
+    this.exportFramePixelSize = [width, height];
+    this.exportFrame.style.width = `${width}px`;
+    this.exportFrame.style.height = `${height}px`;
+    this.exportFrame.hidden = false;
   }
 
   private applyPresetComposition(): void {
