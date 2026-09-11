@@ -1,10 +1,25 @@
-import type { RoutePiece } from '../editor/model';
+import { cloneSegments, flattenTrack, resetTrack, trimTrack, type RoutePiece } from '../editor/model';
 import type { GpxTrack } from '../gpx/types';
+
+export interface TrackSelection {
+  trackId: string;
+  startIndex: number;
+  endIndex: number;
+}
 
 export interface AppState {
   tracks: GpxTrack[];
   selectedTrackId?: string;
+  selection?: TrackSelection;
   pieces: RoutePiece[];
+  selectedPieceId?: string;
+}
+
+interface HistorySnapshot {
+  tracks: GpxTrack[];
+  pieces: RoutePiece[];
+  selection?: TrackSelection;
+  selectedPieceId?: string;
 }
 
 type Listener = (state: AppState) => void;
@@ -12,85 +27,198 @@ type Listener = (state: AppState) => void;
 class Store {
   private state: AppState = { tracks: [], pieces: [] };
   private listeners = new Set<Listener>();
-  private past: RoutePiece[][] = [];
-  private future: RoutePiece[][] = [];
+  private past: HistorySnapshot[] = [];
+  private future: HistorySnapshot[] = [];
 
   get(): AppState { return this.state; }
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     listener(this.state);
     return () => this.listeners.delete(listener);
   }
-  set(update: Partial<AppState>): void {
-    this.state = { ...this.state, ...update };
-    this.emit();
-  }
+
   addTrack(track: GpxTrack): void {
     if (this.state.tracks.length >= 4) throw new Error('Maximum of four GPX files reached.');
-    this.set({ tracks: [...this.state.tracks, track], selectedTrackId: track.id });
+    const pointCount = flattenTrack(track).length;
+    this.state = {
+      ...this.state,
+      tracks: [...this.state.tracks, track],
+      selectedTrackId: track.id,
+      selection: { trackId: track.id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) },
+    };
+    this.emit();
   }
+
   removeTrack(id: string): void {
     const tracks = this.state.tracks.filter((track) => track.id !== id);
     const pieces = this.state.pieces.filter((piece) => piece.trackId !== id);
-    if (pieces.length !== this.state.pieces.length) this.snapshot();
+    const selectedTrackId = this.state.selectedTrackId === id ? tracks[0]?.id : this.state.selectedTrackId;
+    const selectedTrack = tracks.find((track) => track.id === selectedTrackId);
+    const pointCount = selectedTrack ? flattenTrack(selectedTrack).length : 0;
     this.state = {
       ...this.state,
       tracks,
       pieces,
-      selectedTrackId: this.state.selectedTrackId === id ? tracks[0]?.id : this.state.selectedTrackId,
+      selectedTrackId,
+      selection: selectedTrack ? { trackId: selectedTrack.id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) } : undefined,
+      selectedPieceId: pieces.some((piece) => piece.id === this.state.selectedPieceId) ? this.state.selectedPieceId : undefined,
     };
     this.emit();
   }
+
+  setSelectedTrack(id: string): void {
+    const track = this.state.tracks.find((item) => item.id === id);
+    if (!track) return;
+    const pointCount = flattenTrack(track).length;
+    this.state = {
+      ...this.state,
+      selectedTrackId: id,
+      selection: { trackId: id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) },
+    };
+    this.emit();
+  }
+
+  setSelection(startIndex: number, endIndex: number): void {
+    const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
+    if (!track) return;
+    const pointCount = flattenTrack(track).length;
+    if (!pointCount) return;
+    const clamp = (value: number) => Math.max(0, Math.min(pointCount - 1, Math.round(value)));
+    this.state = {
+      ...this.state,
+      selection: { trackId: track.id, startIndex: clamp(startIndex), endIndex: clamp(endIndex) },
+    };
+    this.emit();
+  }
+
+  trimSelectedTrack(): void {
+    const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
+    const selection = this.state.selection;
+    if (!track || !selection || selection.trackId !== track.id) return;
+    const trimmed = trimTrack(track, selection.startIndex, selection.endIndex);
+    const pieces = this.state.pieces.filter((piece) => piece.trackId !== track.id);
+    this.snapshot();
+    this.future = [];
+    const pointCount = flattenTrack(trimmed).length;
+    this.state = {
+      ...this.state,
+      tracks: this.state.tracks.map((item) => item.id === track.id ? trimmed : item),
+      pieces,
+      selection: { trackId: track.id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) },
+      selectedPieceId: pieces.some((piece) => piece.id === this.state.selectedPieceId) ? this.state.selectedPieceId : undefined,
+    };
+    this.emit();
+  }
+
+  resetSelectedTrack(): void {
+    const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
+    if (!track) return;
+    const reset = resetTrack(track);
+    const pieces = this.state.pieces.filter((piece) => piece.trackId !== track.id);
+    this.snapshot();
+    this.future = [];
+    const pointCount = flattenTrack(reset).length;
+    this.state = {
+      ...this.state,
+      tracks: this.state.tracks.map((item) => item.id === track.id ? reset : item),
+      pieces,
+      selection: { trackId: track.id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) },
+      selectedPieceId: pieces.some((piece) => piece.id === this.state.selectedPieceId) ? this.state.selectedPieceId : undefined,
+    };
+    this.emit();
+  }
+
   addPiece(piece: RoutePiece): void {
-    this.commitPieces([...this.state.pieces, piece]);
+    this.commitPieces([...this.state.pieces, piece], piece.id);
   }
+
   removePiece(id: string): void {
-    this.commitPieces(this.state.pieces.filter((piece) => piece.id !== id));
+    this.commitPieces(
+      this.state.pieces.filter((piece) => piece.id !== id),
+      this.state.selectedPieceId === id ? undefined : this.state.selectedPieceId,
+    );
   }
+
+  selectPiece(id?: string): void {
+    this.state = { ...this.state, selectedPieceId: id };
+    this.emit();
+  }
+
   reversePiece(id: string): void {
-    this.commitPieces(this.state.pieces.map((piece) => piece.id === id ? { ...piece, reversed: !piece.reversed } : piece));
+    this.commitPieces(this.state.pieces.map((piece) => piece.id === id ? { ...piece, reversed: !piece.reversed } : piece), id);
   }
+
   movePiece(id: string, direction: -1 | 1): void {
     const index = this.state.pieces.findIndex((piece) => piece.id === id);
     const target = index + direction;
     if (index < 0 || target < 0 || target >= this.state.pieces.length) return;
     const pieces = [...this.state.pieces];
     [pieces[index], pieces[target]] = [pieces[target], pieces[index]];
-    this.commitPieces(pieces);
+    this.commitPieces(pieces, id);
   }
+
   clearPieces(): void {
-    if (this.state.pieces.length) this.commitPieces([]);
+    if (this.state.pieces.length) this.commitPieces([], undefined);
   }
+
   undo(): void {
     const previous = this.past.pop();
     if (!previous) return;
-    this.future.push(this.clonePieces(this.state.pieces));
-    this.state = { ...this.state, pieces: previous };
-    this.emit();
+    this.future.push(this.makeSnapshot());
+    this.restoreSnapshot(previous);
   }
+
   redo(): void {
     const next = this.future.pop();
     if (!next) return;
-    this.past.push(this.clonePieces(this.state.pieces));
-    this.state = { ...this.state, pieces: next };
-    this.emit();
+    this.past.push(this.makeSnapshot());
+    this.restoreSnapshot(next);
   }
+
   canUndo(): boolean { return this.past.length > 0; }
   canRedo(): boolean { return this.future.length > 0; }
 
-  private commitPieces(pieces: RoutePiece[]): void {
+  private commitPieces(pieces: RoutePiece[], selectedPieceId?: string): void {
     this.snapshot();
     this.future = [];
-    this.state = { ...this.state, pieces };
+    this.state = { ...this.state, pieces, selectedPieceId };
     this.emit();
   }
+
   private snapshot(): void {
-    this.past.push(this.clonePieces(this.state.pieces));
+    this.past.push(this.makeSnapshot());
     if (this.past.length > 100) this.past.shift();
   }
-  private clonePieces(pieces: RoutePiece[]): RoutePiece[] {
-    return pieces.map((piece) => ({ ...piece }));
+
+  private makeSnapshot(): HistorySnapshot {
+    return {
+      tracks: this.state.tracks.map((track) => this.cloneTrack(track)),
+      pieces: this.state.pieces.map((piece) => ({ ...piece })),
+      selection: this.state.selection ? { ...this.state.selection } : undefined,
+      selectedPieceId: this.state.selectedPieceId,
+    };
   }
+
+  private restoreSnapshot(snapshot: HistorySnapshot): void {
+    this.state = {
+      ...this.state,
+      tracks: snapshot.tracks.map((track) => this.cloneTrack(track)),
+      pieces: snapshot.pieces.map((piece) => ({ ...piece })),
+      selection: snapshot.selection ? { ...snapshot.selection } : undefined,
+      selectedPieceId: snapshot.selectedPieceId,
+    };
+    this.emit();
+  }
+
+  private cloneTrack(track: GpxTrack): GpxTrack {
+    return {
+      ...track,
+      originalSegments: cloneSegments(track.originalSegments),
+      segments: cloneSegments(track.segments),
+    };
+  }
+
   private emit(): void {
     for (const listener of this.listeners) listener(this.state);
   }
