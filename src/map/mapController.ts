@@ -14,10 +14,12 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style.js';
 import type { Coordinate } from 'ol/coordinate.js';
 import { flattenTrack, getPiecePoints, type RoutePiece } from '../editor/model';
 import type { GpxTrack } from '../gpx/types';
-import { rasterProviders } from './sources/providers';
+import { getRasterProvider, rasterProviders } from './sources/providers';
+import { getCartographicPreset, type CartographicStylePreset } from './styles/presets';
 
 const palette = ['#d33f49', '#3568d4', '#31855b', '#8b4fb3'];
 type SelectionHandle = 'start' | 'end';
+export type MapLayerId = 'base' | 'tracks' | 'combined' | 'selection';
 
 export class MapController {
   private map: Map;
@@ -29,15 +31,17 @@ export class MapController {
   private selectionProjected: Coordinate[] = [];
   private selectionChangeHandler?: (handle: SelectionHandle, index: number) => void;
   private trackSignature = '';
+  private preset: CartographicStylePreset = getCartographicPreset('book-light');
 
   constructor(target: HTMLElement) {
     const provider = rasterProviders[0];
     this.baseLayer = new TileLayer({
-      source: new XYZ({ url: provider.url, attributions: provider.attribution, maxZoom: provider.maxZoom }),
+      source: this.makeRasterSource(provider.id),
+      zIndex: 0,
     });
     this.trackLayer = new VectorLayer({ source: new VectorSource(), zIndex: 10 });
-    this.selectionLayer = new VectorLayer({ source: new VectorSource(), zIndex: 30 });
     this.compositeLayer = new VectorLayer({ source: new VectorSource(), zIndex: 20 });
+    this.selectionLayer = new VectorLayer({ source: new VectorSource(), zIndex: 30 });
     this.map = new Map({
       target,
       layers: [this.baseLayer, this.trackLayer, this.compositeLayer, this.selectionLayer],
@@ -64,6 +68,25 @@ export class MapController {
     this.selectionChangeHandler = handler;
   }
 
+  setBaseProvider(providerId: string): void {
+    this.baseLayer.setSource(this.makeRasterSource(providerId));
+  }
+
+  setLayerVisibility(layerId: MapLayerId, visible: boolean): void {
+    this.getLayer(layerId).setVisible(visible);
+  }
+
+  setLayerOpacity(layerId: MapLayerId, opacity: number): void {
+    this.getLayer(layerId).setOpacity(Math.max(0, Math.min(1, opacity)));
+  }
+
+  setStylePreset(presetId: string): void {
+    this.preset = getCartographicPreset(presetId);
+    this.restyleTracks();
+    this.restyleComposite();
+    this.restyleSelection();
+  }
+
   setTracks(tracks: GpxTrack[], selectedTrackId?: string): void {
     const source = this.trackLayer.getSource();
     if (!source) return;
@@ -71,12 +94,12 @@ export class MapController {
     tracks.forEach((track, index) => {
       const lines = track.segments.map((segment) => segment.points.map((point) => fromLonLat([point.lon, point.lat])));
       const feature = new Feature(new MultiLineString(lines));
-      feature.setStyle(new Style({
-        stroke: new Stroke({ color: palette[index % palette.length], width: track.id === selectedTrackId ? 5 : 3 }),
-      }));
       feature.setId(track.id);
+      feature.set('paletteIndex', index);
+      feature.set('selectedTrack', track.id === selectedTrackId);
       source.addFeature(feature);
     });
+    this.restyleTracks();
 
     const signature = tracks.map((track) => track.id).join('|');
     if (tracks.length && signature !== this.trackSignature) {
@@ -105,21 +128,18 @@ export class MapController {
     const hi = Math.max(start, end);
 
     if (hi > lo) {
-      const selection = new Feature(new LineString(this.selectionProjected.slice(lo, hi + 1)));
-      selection.setStyle(new Style({
-        stroke: new Stroke({ color: 'rgba(255,255,255,0.9)', width: 8 }),
-      }));
+      const halo = new Feature(new LineString(this.selectionProjected.slice(lo, hi + 1)));
+      halo.set('selectionRole', 'halo');
       const inner = new Feature(new LineString(this.selectionProjected.slice(lo, hi + 1)));
-      inner.setStyle(new Style({
-        stroke: new Stroke({ color: '#f0a500', width: 4 }),
-      }));
-      source.addFeatures([selection, inner]);
+      inner.set('selectionRole', 'inner');
+      source.addFeatures([halo, inner]);
     }
 
     source.addFeatures([
       this.makeHandle(this.selectionProjected[start], 'start', '#18794e'),
       this.makeHandle(this.selectionProjected[end], 'end', '#b42318'),
     ]);
+    this.restyleSelection();
   }
 
   setComposite(pieces: RoutePiece[], tracks: GpxTrack[], selectedPieceId?: string): void {
@@ -131,13 +151,69 @@ export class MapController {
       if (points.length < 2) continue;
       const feature = new Feature(new LineString(points.map((point) => fromLonLat([point.lon, point.lat]))));
       feature.setId(piece.id);
+      feature.set('selectedPiece', piece.id === selectedPieceId);
+      source.addFeature(feature);
+    }
+    this.restyleComposite();
+  }
+
+  private makeRasterSource(providerId: string): XYZ {
+    const provider = getRasterProvider(providerId);
+    return new XYZ({
+      url: provider.url,
+      attributions: provider.attribution,
+      maxZoom: provider.maxZoom,
+      crossOrigin: 'anonymous',
+    });
+  }
+
+  private getLayer(layerId: MapLayerId): TileLayer<XYZ> | VectorLayer<VectorSource> {
+    if (layerId === 'base') return this.baseLayer;
+    if (layerId === 'tracks') return this.trackLayer;
+    if (layerId === 'combined') return this.compositeLayer;
+    return this.selectionLayer;
+  }
+
+  private restyleTracks(): void {
+    const source = this.trackLayer.getSource();
+    if (!source) return;
+    for (const feature of source.getFeatures()) {
+      const index = Number(feature.get('paletteIndex') ?? 0);
+      const selected = Boolean(feature.get('selectedTrack'));
+      const color = palette[index % palette.length];
       feature.setStyle(new Style({
         stroke: new Stroke({
-          color: piece.id === selectedPieceId ? '#f0a500' : '#151515',
-          width: piece.id === selectedPieceId ? 8 : 6,
+          color: this.withOpacity(color, this.preset.trackOpacity),
+          width: selected ? this.preset.selectedTrackWidth : this.preset.trackWidth,
         }),
       }));
-      source.addFeature(feature);
+    }
+  }
+
+  private restyleComposite(): void {
+    const source = this.compositeLayer.getSource();
+    if (!source) return;
+    for (const feature of source.getFeatures()) {
+      const selected = Boolean(feature.get('selectedPiece'));
+      feature.setStyle(new Style({
+        stroke: new Stroke({
+          color: selected ? this.preset.selectedPieceColor : this.preset.compositeColor,
+          width: selected ? this.preset.selectedPieceWidth : this.preset.compositeWidth,
+        }),
+      }));
+    }
+  }
+
+  private restyleSelection(): void {
+    const source = this.selectionLayer.getSource();
+    if (!source) return;
+    for (const feature of source.getFeatures()) {
+      const role = feature.get('selectionRole');
+      if (role === 'halo') {
+        feature.setStyle(new Style({ stroke: new Stroke({ color: this.preset.selectionHaloColor, width: this.preset.selectionHaloWidth }) }));
+      } else if (role === 'inner') {
+        feature.setStyle(new Style({ stroke: new Stroke({ color: this.preset.selectionColor, width: Math.max(3, this.preset.selectionHaloWidth - 4) }) }));
+      }
     }
   }
 
@@ -168,5 +244,13 @@ export class MapController {
       }
     }
     return bestIndex;
+  }
+
+  private withOpacity(hex: string, opacity: number): string {
+    const value = hex.replace('#', '');
+    const r = Number.parseInt(value.slice(0, 2), 16);
+    const g = Number.parseInt(value.slice(2, 4), 16);
+    const b = Number.parseInt(value.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${opacity})`;
   }
 }
