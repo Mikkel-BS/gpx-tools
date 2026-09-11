@@ -10,6 +10,10 @@ function childElements(el: Element, name: string): Element[] {
   return Array.from(el.children).filter((child) => localName(child) === name);
 }
 
+function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
+  return segments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) }));
+}
+
 export function parseGpx(xml: string, fileName: string): GpxTrack {
   const doc = parser.parseFromString(xml, 'application/xml');
   const parseError = doc.querySelector('parsererror');
@@ -50,7 +54,8 @@ export function parseGpx(xml: string, fileName: string): GpxTrack {
     id: crypto.randomUUID(),
     fileName,
     originalXml: xml,
-    segments,
+    originalSegments: cloneSegments(segments),
+    segments: cloneSegments(segments),
     importedAt: Date.now(),
   };
 }
