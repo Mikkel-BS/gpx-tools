@@ -1,6 +1,6 @@
 import 'ol/ol.css';
 import './styles.css';
-import { buildComposite, createPiece, detectDiscontinuities, flattenTrack, getPiecePoints } from './editor/model';
+import { buildComposite, createPiece, detectDiscontinuities, flattenTrack, getPiecePoints, indicesShareSegment } from './editor/model';
 import { parseGpx } from './gpx/parser';
 import { getTrackStats } from './gpx/stats';
 import { segmentsToCoordinateOnlyGpx, toCoordinateOnlyGpx } from './gpx/serialize';
@@ -8,6 +8,7 @@ import { downloadText } from './export/download';
 import { MapController, type MapLayerId } from './map/mapController';
 import { rasterProviders } from './map/sources/providers';
 import { cartographicPresets } from './map/styles/presets';
+import { initNtr1Ui } from './ntr1/ui';
 import { store } from './state/store';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -39,14 +40,21 @@ app.innerHTML = `
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="combined" checked><span>Combined route</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="combined" aria-label="Combined route opacity"></div>
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="selection" checked><span>Selection/edit handles</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="selection" aria-label="Selection opacity"></div>
         </div>
-        <p class="hint">Styles now affect the full composition: preferred basemap, raster tone/contrast, map background and GPX overlays. You can still override the basemap manually after choosing a style.</p>
+        <p class="hint">Styles affect the full composition: preferred basemap, raster tone/contrast, map background and GPX overlays. You can still override the basemap manually after choosing a style.</p>
       </section>
       <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p></section>
+      <section id="ntr1Root"></section>
     </aside>
     <section class="map-panel"><div id="map"></div><div id="status" class="status">No tracks loaded</div></section>
   </main>`;
 
 const map = new MapController(document.querySelector<HTMLElement>('#map')!);
+initNtr1Ui(document.querySelector<HTMLElement>('#ntr1Root')!, {
+  getState: () => store.get(),
+  addTrack: (track) => store.addTrack(track),
+  setMapPreview: (points) => map.setNtr1Preview(points),
+});
+
 const input = document.querySelector<HTMLInputElement>('#fileInput')!;
 const list = document.querySelector<HTMLDivElement>('#trackList')!;
 const pieceList = document.querySelector<HTMLDivElement>('#pieceList')!;
@@ -162,13 +170,14 @@ store.subscribe((state) => {
   map.setComposite(state.pieces, state.tracks, state.selectedPieceId);
   map.setSelection(selectedTrack, selection?.startIndex ?? 0, selection?.endIndex ?? 0);
 
+  const selectionWithinSegment = Boolean(selectedTrack && selection && indicesShareSegment(selectedTrack, selection.startIndex, selection.endIndex));
   cleanExportBtn.disabled = !selectedTrack;
   routeExportBtn.disabled = composite.length < 2;
   clearPiecesBtn.disabled = state.pieces.length === 0;
   undoBtn.disabled = !store.canUndo();
   redoBtn.disabled = !store.canRedo();
-  addPieceBtn.disabled = !selectedTrack || !selection || selection.startIndex === selection.endIndex;
-  trimTrackBtn.disabled = !selectedTrack || !selection || selection.startIndex === selection.endIndex;
+  addPieceBtn.disabled = !selectedTrack || !selection || selection.startIndex === selection.endIndex || !selectionWithinSegment;
+  trimTrackBtn.disabled = !selectedTrack || !selection || selection.startIndex === selection.endIndex || !selectionWithinSegment;
   resetTrackBtn.disabled = !selectedTrack || !selectedTrack.originalSegments;
 
   if (selectedTrack && selection) {
@@ -178,7 +187,9 @@ store.subscribe((state) => {
     startInput.value = String(selection.startIndex);
     endInput.value = String(selection.endIndex);
     const selectedCount = Math.abs(selection.endIndex - selection.startIndex) + 1;
-    selectionHint.textContent = `${selectedCount.toLocaleString()} of ${pointCount.toLocaleString()} points selected${selection.startIndex > selection.endIndex ? ' · route piece will be reversed' : ''}.`;
+    selectionHint.textContent = selectionWithinSegment
+      ? `${selectedCount.toLocaleString()} of ${pointCount.toLocaleString()} points selected${selection.startIndex > selection.endIndex ? ' · route piece will be reversed' : ''}.`
+      : 'Selection crosses a GPX track-segment boundary. Trim and route-piece actions require one segment.';
   } else {
     startInput.value = '0';
     endInput.value = '0';
