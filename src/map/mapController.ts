@@ -46,7 +46,7 @@ export class MapController {
     });
     if (tracks.length) {
       const extent = source.getExtent();
-      if (extent.every(Number.isFinite)) this.map.getView().fit(extent, { padding: [50, 50, 50, 50], maxZoom: 15, duration: 250 });
+      if if (extent && extent.every(Number.isFinite)) this.map.getView().fit(extent, { padding: [50, 50, 50, 50], maxZoom: 15, duration: 250 });
     }
   }
 }
