@@ -11,6 +11,7 @@ export interface GpxTrack {
   id: string;
   fileName: string;
   originalXml: string;
+  originalSegments: GpxSegment[];
   segments: GpxSegment[];
   importedAt: number;
 }
