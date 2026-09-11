@@ -79,9 +79,11 @@ export async function renderMapImage(controller: MapController, options: MapImag
   const originalResolution = view.getResolution();
   const originalRotation = view.getRotation();
   const originalBaseVisible = controller.getLayerVisibility('base');
+  const originalSelectionVisible = controller.getLayerVisibility('selection');
 
   try {
     controller.setLayerVisibility('base', options.includeBaseMap);
+    controller.setLayerVisibility('selection', false);
     map.setSize([widthPx, heightPx]);
     view.fit(exportExtent, { size: [widthPx, heightPx], padding: [0, 0, 0, 0], duration: 0 });
     await waitForRender(map);
@@ -100,6 +102,7 @@ export async function renderMapImage(controller: MapController, options: MapImag
     return { canvas, attribution, providerId: provider.id, metersPerPixel };
   } finally {
     controller.setLayerVisibility('base', originalBaseVisible);
+    controller.setLayerVisibility('selection', originalSelectionVisible);
     if (originalSize) map.setSize(originalSize);
     if (originalCenter) view.setCenter(originalCenter);
     if (originalResolution !== undefined) view.setResolution(originalResolution);
