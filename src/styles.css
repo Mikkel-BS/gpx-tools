@@ -17,6 +17,10 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; margin: 0
 .import:hover { border-color: #65635d; }
 .import input { display: none; }
 .hint { font-size: 12px; margin: 7px 0 0; }
+.selection-instruction { margin: 0 0 10px; font-size: 12px; }
+.handle-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 3px; vertical-align: -1px; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #bbb; }
+.handle-dot.start { background: #18794e; }
+.handle-dot.end { background: #b42318; margin-left: 4px; }
 .track-card { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; padding: 5px; border: 1px solid #ddd9d0; border-radius: 9px; background: white; }
 .track-card.selected { border-color: #33332f; box-shadow: 0 0 0 1px #33332f; }
 .track-main { border: 0; background: transparent; text-align: left; padding: 7px; cursor: pointer; min-width: 0; }
@@ -26,13 +30,15 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; margin: 0
 .range-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 9px; }
 .range-grid label { display: grid; gap: 5px; font-size: 11px; color: #6c6961; }
 .range-grid input { width: 100%; border: 1px solid #d4d0c6; border-radius: 7px; padding: 9px; background: white; color: #282824; }
+.button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .primary, .secondary { width: 100%; border-radius: 8px; padding: 11px 13px; font-weight: 650; cursor: pointer; margin-top: 8px; }
 .primary { border: 0; background: #2d302d; color: white; }
 .secondary { border: 1px solid #cbc7bd; background: #fff; color: #35342f; }
 .primary:disabled, .secondary:disabled, .history button:disabled, .piece-controls button:disabled { opacity: .35; cursor: default; }
 .history { display: flex; gap: 5px; }
 .history button, .piece-controls button { border: 1px solid #d4d0c6; border-radius: 6px; background: white; min-width: 34px; min-height: 34px; cursor: pointer; }
-.piece-card { border: 1px solid #ddd9d0; border-radius: 9px; background: white; padding: 9px; margin-top: 8px; }
+.piece-card { border: 1px solid #ddd9d0; border-radius: 9px; background: white; padding: 9px; margin-top: 8px; cursor: pointer; }
+.piece-card.selected { border-color: #c88900; box-shadow: 0 0 0 1px #c88900; background: #fffaf0; }
 .piece-info { min-width: 0; }
 .piece-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 8px; }
 .warnings { margin-top: 8px; }
