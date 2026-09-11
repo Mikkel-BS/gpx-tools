@@ -1,0 +1,133 @@
+NTR1 ROUTE-IN-QR FORMAT — VERSION 1
+
+Purpose
+-------
+NTR1 stores an ordered latitude/longitude route directly inside a QR code.
+No URL, server, app, or external data source is required to recover the route.
+
+The QR text is deliberately restricted to the QR "alphanumeric" character set
+so that QR encoding is more space-efficient than arbitrary byte-mode text.
+
+Payload syntax
+--------------
+NTR1:E<precision>:N<points>:B<bytes>:C<crc32>:<base45-body>X
+
+Example header:
+NTR1:E5:N360:B820:C1234ABCD:
+
+Fields:
+- NTR1       format/version identifier
+- E5         coordinate scale is 10^5 (stored integer / 100000 = degrees)
+- N360       number of route points
+- B820       number of bytes in the decoded binary body
+- C1234ABCD  CRC-32/ISO-HDLC of the binary body, uppercase hexadecimal
+- body       Base45 text encoding of the binary body
+- X          one-character sentinel after the body
+
+IMPORTANT: ':' is also a legal Base45 character. Parse the payload using at
+most five ':' splits. The first five separators terminate the fixed header.
+Then determine the exact Base45 body length from B:
+    encoded_length = 3*(B//2) + 2*(B%2)
+Read exactly that many characters as the body; the next character must be X.
+This sentinel prevents accidental loss if the Base45 body would otherwise end
+with a space.
+
+Base45
+------
+Alphabet, in value order 0..44:
+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:
+
+Decode three Base45 characters c,d,e as:
+    x = value(c) + 45*value(d) + 45^2*value(e)
+    output bytes floor(x/256), x mod 256
+    x must be <= 65535
+
+If two characters remain c,d:
+    x = value(c) + 45*value(d)
+    output byte x
+    x must be <= 255
+
+Binary body
+-----------
+1. First 8 bytes:
+   - signed 32-bit little-endian latitude integer
+   - signed 32-bit little-endian longitude integer
+
+2. Every remaining point is stored as:
+   - latitude delta from previous point, ZigZag + unsigned LEB128
+   - longitude delta from previous point, ZigZag + unsigned LEB128
+
+ZigZag
+------
+Signed delta d -> unsigned u:
+    if d >= 0: u = 2*d
+    else:      u = -2*d - 1
+
+Unsigned u -> signed delta d:
+    if u is even: d = u/2
+    else:         d = -(u+1)/2
+
+Unsigned LEB128
+---------------
+Read bytes from least-significant 7-bit group to most-significant.
+For each byte:
+- bits 0..6 are payload
+- bit 7 = 1 means another byte follows
+- bit 7 = 0 terminates the integer
+
+Coordinate reconstruction
+-------------------------
+After reading the first absolute latitude/longitude pair, repeatedly:
+1. decode a latitude delta
+2. decode a longitude delta
+3. add each delta to its previous integer coordinate
+4. divide each integer by 10^precision to obtain decimal degrees
+5. emit points in this order
+
+Integrity
+---------
+After Base45 decoding, verify:
+- binary byte length equals B
+- CRC-32/ISO-HDLC equals C
+- exactly N points are decoded
+- no unexplained bytes remain
+
+CRC-32/ISO-HDLC parameters:
+- reflected polynomial: 0xEDB88320
+- initial value: 0xFFFFFFFF
+- reflected input/output
+- final XOR: 0xFFFFFFFF
+This is the usual CRC-32 used by ZIP, PNG and Python zlib.crc32.
+
+Converting to GPX
+-----------------
+A minimal GPX 1.1 track can be written as:
+<gpx version="1.1" creator="NTR1 decoder"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><trkseg>
+    <trkpt lat="LAT" lon="LON"/>
+    ...
+  </trkseg></trk>
+</gpx>
+
+No elevation, timestamps, names, or other activity data are encoded.
+
+LLM recovery instruction
+------------------------
+If an LLM is given an NTR1 payload plus this specification, ask it to:
+"Implement the NTR1 decoder exactly as specified, verify length and CRC, decode
+all N coordinates, and emit a GPX 1.1 track containing only the recovered
+latitude/longitude points."
+
+An LLM should preferably execute deterministic decoder code rather than try to
+perform thousands of Base45/LEB128 arithmetic operations manually.
+
+Design notes
+------------
+- The route simplification used before NTR1 encoding is not part of the NTR1
+  decoding format. It is lossy geometry preprocessing chosen by the encoder.
+- E5 gives about 1.11 m latitude resolution and about 0.52 m longitude
+  resolution near 62 degrees north; quantization error is therefore sub-metre
+  to roughly 0.6 m in position.
+- The format contains only route coordinates plus the small technical header
+  and integrity information needed to decode them.
