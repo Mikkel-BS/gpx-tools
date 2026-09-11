@@ -11,15 +11,18 @@ function versionFromModules(modules: number): number {
   return version;
 }
 
-export function createNtr1Qr(payload: string, errorCorrection: Ntr1ErrorCorrection): Ntr1QrSymbol {
-  if (!/^NTR1:/.test(payload)) throw new Error('QR payload is not NTR1 text.');
+export function createTextQr(
+  text: string,
+  errorCorrection: Ntr1ErrorCorrection,
+  mode: 'Alphanumeric' | 'Byte' = 'Byte',
+): Ntr1QrSymbol {
   const qr = qrcode(0, errorCorrection);
-  qr.addData(payload, 'Alphanumeric');
+  qr.addData(text, mode);
   try {
     qr.make();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/overflow/i.test(message)) throw new Error('NTR1 payload does not fit one QR code at this error-correction level.');
+    if (/overflow/i.test(message)) throw new Error('QR payload does not fit one QR code at this error-correction level.');
     throw error;
   }
   const modules = qr.getModuleCount();
@@ -27,9 +30,21 @@ export function createNtr1Qr(payload: string, errorCorrection: Ntr1ErrorCorrecti
     version: versionFromModules(modules),
     modules,
     errorCorrection,
-    payloadChars: payload.length,
+    payloadChars: text.length,
     isDark: (row, column) => qr.isDark(row, column),
   };
+}
+
+export function createNtr1Qr(payload: string, errorCorrection: Ntr1ErrorCorrection): Ntr1QrSymbol {
+  if (!/^NTR1:/.test(payload)) throw new Error('QR payload is not NTR1 text.');
+  try {
+    return createTextQr(payload, errorCorrection, 'Alphanumeric');
+  } catch (error) {
+    if (error instanceof Error && /QR payload does not fit/.test(error.message)) {
+      throw new Error('NTR1 payload does not fit one QR code at this error-correction level.');
+    }
+    throw error;
+  }
 }
 
 export function payloadFitsQr(payload: string, errorCorrection: Ntr1ErrorCorrection): boolean {
