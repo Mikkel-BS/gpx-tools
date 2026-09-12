@@ -1,0 +1,90 @@
+.layer-visibility-list .layer-row {
+  grid-template-columns: 1fr;
+}
+
+.layer-settings {
+  margin-top: 10px;
+  border: 1px solid #ddd9d0;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.layer-settings summary {
+  cursor: pointer;
+  padding: 10px 11px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #55524b;
+}
+
+.opacity-list {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid #ece9e2;
+}
+
+.opacity-list label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border-top: 1px solid #ece9e2;
+  font-size: 11px;
+  color: #5f5c55;
+}
+
+.opacity-list label:first-child {
+  border-top: 0;
+}
+
+.opacity-list input[type="range"] {
+  width: 100%;
+}
+
+.export-share {
+  border-top: 1px solid #ddd9d0;
+  padding-top: 22px;
+  margin-bottom: 18px;
+}
+
+.export-tool {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e1d8;
+}
+
+.export-tool:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.export-tool h3,
+.export-share #imageExportRoot h2,
+.export-share #ntr1Root h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: #77736a;
+}
+
+.export-share #imageExportRoot,
+.export-share #ntr1Root {
+  border-top: 1px solid #e5e1d8;
+  padding-top: 14px;
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+.export-share #imageExportRoot .secondary,
+.export-share #ntr1Root .secondary {
+  margin-top: 7px;
+}
+
+@media (max-width: 720px) {
+  .opacity-list label {
+    grid-template-columns: minmax(0, 1fr) 88px;
+  }
+}
