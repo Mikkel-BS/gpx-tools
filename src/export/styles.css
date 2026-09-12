@@ -1,3 +1,5 @@
+@import '../frontend-cleanup.css';
+
 #imageExportRoot { border-top: 1px solid #ddd9d0; padding-top: 22px; }
 .image-export-dialog { width: min(1040px, calc(100vw - 30px)); max-height: min(880px, calc(100vh - 30px)); padding: 0; border: 1px solid #cfcac0; border-radius: 14px; background: #f6f5f1; color: #242421; box-shadow: 0 20px 70px rgba(0,0,0,.22); }
 .image-export-dialog::backdrop { background: rgba(28,28,25,.5); backdrop-filter: blur(2px); }
