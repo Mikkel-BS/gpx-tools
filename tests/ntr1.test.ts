@@ -201,7 +201,7 @@ describe('NTR1 segment safety', () => {
 
 describe('NTR1 QR fitting', () => {
   it('produces a valid QR with expected version constraints', () => {
-    const symbol = createNtr1Qr(CANICAL, 'Q');
+    const symbol = createNtr1Qr(CANONICAL, 'Q');
     expect(symbol.version).toBeGreaterThanOrEqual(1);
     expect(symbol.version).toBeLessThanOrEqual(40);
     expect(symbol.modules).toBe(17 + 4 * symbol.version);
