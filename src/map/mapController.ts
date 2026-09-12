@@ -19,7 +19,7 @@ import type { GpxPoint, GpxTrack } from '../gpx/types';
 import { getBaseMapDefinition } from './sources/baseMaps';
 import { getRasterProvider, rasterProviders } from './sources/providers';
 import { loadVectorStyle } from './sources/vectorStyles';
-import { getCartographicPreset, type CartographicStylePreset } from './styles/presets';
+import { getRouteAppearancePreset, type RouteAppearancePreset } from './styles/presets';
 
 type SelectionHandle = 'start' | 'end';
 export type MapLayerId = 'base' | 'tracks' | 'combined' | 'selection';
@@ -32,12 +32,11 @@ export class MapController {
   private compositeLayer: VectorLayer<VectorSource>;
   private ntr1PreviewLayer: VectorLayer<VectorSource>;
   private baseGroup: LayerGroup;
-  private rasterBaseLayer?: TileLayer<XYZ>;
   private selectionTrack?: GpxTrack;
   private selectionProjected: Coordinate[] = [];
   private selectionChangeHandler?: (handle: SelectionHandle, index: number) => void;
   private trackSignature = '';
-  private preset: CartographicStylePreset = getCartographicPreset('book-light');
+  private routeAppearance: RouteAppearancePreset = getRouteAppearancePreset('book-light');
   private baseProviderId = rasterProviders[0].id;
   private baseRequestToken = 0;
   private exportFrame: HTMLDivElement;
@@ -48,7 +47,6 @@ export class MapController {
   constructor(target: HTMLElement) {
     this.target = target;
     const initialRaster = this.makeRasterLayer(this.baseProviderId);
-    this.rasterBaseLayer = initialRaster;
     this.baseGroup = new LayerGroup({ layers: [initialRaster], zIndex: 0 });
     this.trackLayer = new VectorLayer({ source: new VectorSource(), zIndex: 10 });
     this.compositeLayer = new VectorLayer({ source: new VectorSource(), zIndex: 20 });
@@ -83,7 +81,6 @@ export class MapController {
       this.selectionChangeHandler?.(handle, index);
     });
     this.map.addInteraction(translate);
-    this.applyPresetComposition();
   }
 
   onSelectionChange(handler: (handle: SelectionHandle, index: number) => void): void {
@@ -100,9 +97,9 @@ export class MapController {
       const layer = this.makeRasterLayer(provider.id);
       const group = new LayerGroup({ layers: [layer], zIndex: 0, visible, opacity });
       this.replaceBaseGroup(group);
-      this.rasterBaseLayer = layer;
       this.baseProviderId = provider.id;
-      this.applyPresetComposition();
+      this.target.style.background = '#e4e5df';
+      this.map.render();
       return;
     }
 
@@ -112,9 +109,8 @@ export class MapController {
     await apply(group, style);
     if (requestToken !== this.baseRequestToken) return;
     this.replaceBaseGroup(group);
-    this.rasterBaseLayer = undefined;
     this.baseProviderId = provider.id;
-    this.target.style.background = this.preset.mapBackground;
+    this.target.style.background = '#e4e5df';
     this.map.render();
   }
 
@@ -157,16 +153,12 @@ export class MapController {
     return [center[0] - halfWidth, center[1] - halfHeight, center[0] + halfWidth, center[1] + halfHeight];
   }
 
-  setStylePreset(presetId: string): CartographicStylePreset {
-    this.preset = getCartographicPreset(presetId);
-    if (this.baseProviderId !== this.preset.preferredBaseProviderId) {
-      void this.setBaseProvider(this.preset.preferredBaseProviderId).catch((error) => console.warn('Could not switch preferred basemap', error));
-    }
-    this.applyPresetComposition();
+  setRouteAppearance(presetId: string): RouteAppearancePreset {
+    this.routeAppearance = getRouteAppearancePreset(presetId);
     this.restyleTracks();
     this.restyleComposite();
     this.restyleSelection();
-    return this.preset;
+    return this.routeAppearance;
   }
 
   setTracks(tracks: GpxTrack[], selectedTrackId?: string): void {
@@ -279,22 +271,8 @@ export class MapController {
     this.exportFrame.hidden = false;
   }
 
-  private applyPresetComposition(): void {
-    this.target.style.background = this.preset.mapBackground;
-    this.rasterBaseLayer?.changed();
-  }
-
   private makeRasterLayer(providerId: string): TileLayer<XYZ> {
-    const layer = new TileLayer({ source: this.makeRasterSource(providerId), zIndex: 0 });
-    layer.on('prerender', (event) => {
-      const context = event.context;
-      if (context instanceof CanvasRenderingContext2D) context.filter = this.preset.baseFilter;
-    });
-    layer.on('postrender', (event) => {
-      const context = event.context;
-      if (context instanceof CanvasRenderingContext2D) context.filter = 'none';
-    });
-    return layer;
+    return new TileLayer({ source: this.makeRasterSource(providerId), zIndex: 0 });
   }
 
   private makeRasterSource(providerId: string): XYZ {
@@ -320,12 +298,12 @@ export class MapController {
     for (const feature of source.getFeatures()) {
       const index = Number(feature.get('paletteIndex') ?? 0);
       const selected = Boolean(feature.get('selectedTrack'));
-      const colors = this.preset.trackColors.length ? this.preset.trackColors : ['#444444'];
+      const colors = this.routeAppearance.trackColors.length ? this.routeAppearance.trackColors : ['#444444'];
       const color = colors[index % colors.length];
       feature.setStyle(new Style({
         stroke: new Stroke({
-          color: this.withOpacity(color, this.preset.trackOpacity),
-          width: selected ? this.preset.selectedTrackWidth : this.preset.trackWidth,
+          color: this.withOpacity(color, this.routeAppearance.trackOpacity),
+          width: selected ? this.routeAppearance.selectedTrackWidth : this.routeAppearance.trackWidth,
         }),
       }));
     }
@@ -338,8 +316,8 @@ export class MapController {
       const selected = Boolean(feature.get('selectedPiece'));
       feature.setStyle(new Style({
         stroke: new Stroke({
-          color: selected ? this.preset.selectedPieceColor : this.preset.compositeColor,
-          width: selected ? this.preset.selectedPieceWidth : this.preset.compositeWidth,
+          color: selected ? this.routeAppearance.selectedPieceColor : this.routeAppearance.compositeColor,
+          width: selected ? this.routeAppearance.selectedPieceWidth : this.routeAppearance.compositeWidth,
         }),
       }));
     }
@@ -351,9 +329,9 @@ export class MapController {
     for (const feature of source.getFeatures()) {
       const role = feature.get('selectionRole');
       if (role === 'halo') {
-        feature.setStyle(new Style({ stroke: new Stroke({ color: this.preset.selectionHaloColor, width: this.preset.selectionHaloWidth }) }));
+        feature.setStyle(new Style({ stroke: new Stroke({ color: this.routeAppearance.selectionHaloColor, width: this.routeAppearance.selectionHaloWidth }) }));
       } else if (role === 'inner') {
-        feature.setStyle(new Style({ stroke: new Stroke({ color: this.preset.selectionColor, width: Math.max(3, this.preset.selectionHaloWidth - 4) }) }));
+        feature.setStyle(new Style({ stroke: new Stroke({ color: this.routeAppearance.selectionColor, width: Math.max(3, this.routeAppearance.selectionHaloWidth - 4) }) }));
       }
     }
   }
