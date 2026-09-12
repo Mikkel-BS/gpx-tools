@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { chooseNiceScaleDistance } from '../src/export/decorations';
 import { makeImageDimensions, mmToPixels } from '../src/export/layout';
+import { getBaseMapDefinition } from '../src/map/sources/baseMaps';
 import { getRasterProvider } from '../src/map/sources/providers';
+import { vectorStyleProviders } from '../src/map/sources/vectorStyles';
 
 describe('publication image export', () => {
   it('converts physical dimensions to pixels deterministically', () => {
@@ -32,5 +34,27 @@ describe('publication image export', () => {
   it('conservatively blocks Kartverket cache tiles pending rights review', () => {
     expect(getRasterProvider('kartverket-topo').publicationExportPolicy).toBe('blocked-review');
     expect(getRasterProvider('kartverket-gray').publicationExportPolicy).toBe('blocked-review');
+  });
+
+  it('keeps the curated vector library deliberately small and API-key free', () => {
+    expect(vectorStyleProviders.map((provider) => provider.id)).toEqual([
+      'openfreemap-positron',
+      'openfreemap-liberty',
+      'openfreemap-fiord',
+      'openfreemap-dark',
+    ]);
+    for (const provider of vectorStyleProviders) {
+      expect(provider.styleUrl).toMatch(/^https:\/\/tiles\.openfreemap\.org\/styles\//);
+      expect(provider.styleUrl).not.toMatch(/key=|token=/i);
+    }
+  });
+
+  it('requires OpenFreeMap/OpenMapTiles/OpenStreetMap attribution for vector publication export', () => {
+    const positron = getBaseMapDefinition('openfreemap-positron');
+    expect(positron.kind).toBe('vector-style');
+    expect(positron.publicationExportPolicy).toBe('allowed-with-attribution');
+    expect(positron.publicationAttribution).toContain('OpenFreeMap');
+    expect(positron.publicationAttribution).toContain('OpenMapTiles');
+    expect(positron.publicationAttribution).toContain('OpenStreetMap');
   });
 });
