@@ -8,12 +8,15 @@ import { downloadText } from './export/download';
 import { initMapImageExportUi } from './export/ui';
 import { MapController, type MapLayerId } from './map/mapController';
 import { rasterProviders } from './map/sources/providers';
+import { vectorStyleProviders } from './map/sources/vectorStyles';
 import { cartographicPresets } from './map/styles/presets';
 import { initNtr1Ui } from './ntr1/ui';
 import { store } from './state/store';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
-const providerOptions = rasterProviders.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join('');
+const rasterOptions = rasterProviders.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join('');
+const vectorOptions = vectorStyleProviders.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join('');
+const providerOptions = `<optgroup label="Raster maps">${rasterOptions}</optgroup><optgroup label="Curated vector styles">${vectorOptions}</optgroup>`;
 const styleOptions = cartographicPresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
 
 app.innerHTML = `
@@ -34,6 +37,7 @@ app.innerHTML = `
       <section class="map-controls">
         <h2>Map</h2>
         <label class="field-label">Base map<select id="baseMap">${providerOptions}</select></label>
+        <p class="hint">Curated vector styles load directly in your browser from OpenFreeMap. No API key or application server is used.</p>
         <label class="field-label">Cartographic style<select id="stylePreset">${styleOptions}</select></label>
         <div class="layer-list" aria-label="Map layers">
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="base" checked><span>Base map</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="base" aria-label="Base map opacity"></div>
@@ -41,7 +45,7 @@ app.innerHTML = `
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="combined" checked><span>Combined route</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="combined" aria-label="Combined route opacity"></div>
           <div class="layer-row"><label><input type="checkbox" data-layer-visible="selection" checked><span>Selection/edit handles</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="selection" aria-label="Selection opacity"></div>
         </div>
-        <p class="hint">Styles affect the full composition: preferred basemap, raster tone/contrast, map background and GPX overlays. You can still override the basemap manually after choosing a style.</p>
+        <p class="hint">Cartographic presets control project overlays and raster treatment. Vector styles supply their own basemap cartography and remain independently selectable.</p>
       </section>
       <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p></section>
       <section id="imageExportRoot"></section>
@@ -94,7 +98,16 @@ input.addEventListener('change', async () => {
   input.value = '';
 });
 
-baseMapSelect.addEventListener('change', () => map.setBaseProvider(baseMapSelect.value));
+baseMapSelect.addEventListener('change', () => {
+  const requested = baseMapSelect.value;
+  baseMapSelect.disabled = true;
+  void map.setBaseProvider(requested).catch((error) => {
+    alert(error instanceof Error ? error.message : String(error));
+    baseMapSelect.value = map.getBaseProviderId();
+  }).finally(() => {
+    baseMapSelect.disabled = false;
+  });
+});
 stylePresetSelect.addEventListener('change', () => {
   const preset = map.setStylePreset(stylePresetSelect.value);
   baseMapSelect.value = preset.preferredBaseProviderId;
