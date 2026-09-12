@@ -1,6 +1,6 @@
 import './styles.css';
 import type { MapController } from '../map/mapController';
-import { getRasterProvider } from '../map/sources/providers';
+import { getBaseMapDefinition } from '../map/sources/baseMaps';
 import { downloadBlob, canvasToPngBlob } from './image';
 import { getImageLayoutPreset, imageLayoutPresets, makeImageDimensions } from './layout';
 import { renderMapImage } from './mapRenderer';
@@ -83,7 +83,7 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
       return;
     }
 
-    const provider = getRasterProvider(options.map.getBaseProviderId());
+    const provider = getBaseMapDefinition(options.map.getBaseProviderId());
     const includeBase = baseCheck.checked;
     if (!includeBase) {
       licenseCard.className = 'license-card safe';
@@ -98,7 +98,7 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
       renderButton.disabled = false;
     } else {
       licenseCard.className = 'license-card warning';
-      licenseCard.innerHTML = `<strong>${provider.label}: basemap export blocked</strong><span>${provider.publicationNotice}</span><span>Switch to OpenStreetMap or uncheck “Include current basemap”.</span>`;
+      licenseCard.innerHTML = `<strong>${provider.label}: basemap export blocked</strong><span>${provider.publicationNotice}</span><span>Choose OpenStreetMap/OpenFreeMap or uncheck “Include current basemap”.</span>`;
       renderButton.disabled = true;
     }
   };
