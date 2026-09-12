@@ -1,6 +1,6 @@
 import { getPointResolution } from 'ol/proj.js';
 import type { MapController } from '../map/mapController';
-import { getRasterProvider } from '../map/sources/providers';
+import { getBaseMapDefinition } from '../map/sources/baseMaps';
 import { drawExportDecorations } from './decorations';
 import type { ImageExportDimensions } from './layout';
 
@@ -66,7 +66,7 @@ function waitForRender(map: ReturnType<MapController['getMapForExport']>): Promi
 export async function renderMapImage(controller: MapController, options: MapImageRenderOptions): Promise<MapImageRenderResult> {
   const map = controller.getMapForExport();
   const view = map.getView();
-  const provider = getRasterProvider(controller.getBaseProviderId());
+  const provider = getBaseMapDefinition(controller.getBaseProviderId());
   const { widthPx, heightPx, aspect } = options.dimensions;
   const exportExtent = controller.getExportFrameExtent(aspect);
 
