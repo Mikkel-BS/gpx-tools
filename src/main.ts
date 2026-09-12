@@ -9,7 +9,7 @@ import { initMapImageExportUi } from './export/ui';
 import { MapController, type MapLayerId } from './map/mapController';
 import { rasterProviders } from './map/sources/providers';
 import { vectorStyleProviders } from './map/sources/vectorStyles';
-import { cartographicPresets } from './map/styles/presets';
+import { routeAppearancePresets } from './map/styles/presets';
 import { initNtr1Ui } from './ntr1/ui';
 import { store } from './state/store';
 
@@ -17,7 +17,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 const rasterOptions = rasterProviders.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join('');
 const vectorOptions = vectorStyleProviders.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join('');
 const providerOptions = `<optgroup label="Raster maps">${rasterOptions}</optgroup><optgroup label="Curated vector styles">${vectorOptions}</optgroup>`;
-const styleOptions = cartographicPresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
+const appearanceOptions = routeAppearancePresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
 
 app.innerHTML = `
   <main class="shell">
@@ -36,20 +36,37 @@ app.innerHTML = `
       <section><div class="section-title"><h2>Combined route</h2><div class="history"><button id="undo" title="Undo" disabled>↶</button><button id="redo" title="Redo" disabled>↷</button></div></div><div id="pieceList"></div><div id="discontinuities" class="warnings"></div><button id="clearPieces" class="secondary" disabled>Clear route</button></section>
       <section class="map-controls">
         <h2>Map</h2>
-        <label class="field-label">Base map<select id="baseMap">${providerOptions}</select></label>
-        <p class="hint">Curated vector styles load directly in your browser from OpenFreeMap. No API key or application server is used.</p>
-        <label class="field-label">Cartographic style<select id="stylePreset">${styleOptions}</select></label>
-        <div class="layer-list" aria-label="Map layers">
-          <div class="layer-row"><label><input type="checkbox" data-layer-visible="base" checked><span>Base map</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="base" aria-label="Base map opacity"></div>
-          <div class="layer-row"><label><input type="checkbox" data-layer-visible="tracks" checked><span>Imported tracks</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="tracks" aria-label="Imported tracks opacity"></div>
-          <div class="layer-row"><label><input type="checkbox" data-layer-visible="combined" checked><span>Combined route</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="combined" aria-label="Combined route opacity"></div>
-          <div class="layer-row"><label><input type="checkbox" data-layer-visible="selection" checked><span>Selection/edit handles</span></label><input type="range" min="0" max="100" value="100" data-layer-opacity="selection" aria-label="Selection opacity"></div>
+        <label class="field-label">Map style<select id="baseMap">${providerOptions}</select></label>
+        <p class="hint">Choose the underlying cartography independently. Curated vector styles load directly in your browser from OpenFreeMap.</p>
+        <label class="field-label">Route appearance<select id="routeAppearance">${appearanceOptions}</select></label>
+        <p class="hint">Controls GPX, combined-route and selection colors and line weights without changing the map style.</p>
+        <div class="layer-list layer-visibility-list" aria-label="Map layer visibility">
+          <div class="layer-row"><label><input type="checkbox" data-layer-visible="base" checked><span>Base map</span></label></div>
+          <div class="layer-row"><label><input type="checkbox" data-layer-visible="tracks" checked><span>Imported tracks</span></label></div>
+          <div class="layer-row"><label><input type="checkbox" data-layer-visible="combined" checked><span>Combined route</span></label></div>
+          <div class="layer-row"><label><input type="checkbox" data-layer-visible="selection" checked><span>Selection/edit handles</span></label></div>
         </div>
-        <p class="hint">Cartographic presets control project overlays and raster treatment. Vector styles supply their own basemap cartography and remain independently selectable.</p>
+        <details class="layer-settings">
+          <summary>Layer opacity</summary>
+          <div class="opacity-list">
+            <label><span>Base map</span><input type="range" min="0" max="100" value="100" data-layer-opacity="base" aria-label="Base map opacity"></label>
+            <label><span>Imported tracks</span><input type="range" min="0" max="100" value="100" data-layer-opacity="tracks" aria-label="Imported tracks opacity"></label>
+            <label><span>Combined route</span><input type="range" min="0" max="100" value="100" data-layer-opacity="combined" aria-label="Combined route opacity"></label>
+            <label><span>Selection/edit handles</span><input type="range" min="0" max="100" value="100" data-layer-opacity="selection" aria-label="Selection opacity"></label>
+          </div>
+        </details>
       </section>
-      <section><h2>Export</h2><button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button><button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button><p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p></section>
-      <section id="imageExportRoot"></section>
-      <section id="ntr1Root"></section>
+      <section class="export-share">
+        <h2>Export & share</h2>
+        <div class="export-tool export-gpx">
+          <h3>GPX</h3>
+          <button id="cleanExport" class="secondary" disabled>Selected working track · coordinate-only</button>
+          <button id="routeExport" class="primary" disabled>Combined route · coordinate-only</button>
+          <p class="hint">Disconnected route pieces remain separate GPX track segments; no missing geometry is generated.</p>
+        </div>
+        <div id="imageExportRoot" class="export-tool"></div>
+        <div id="ntr1Root" class="export-tool"></div>
+      </section>
     </aside>
     <section class="map-panel"><div id="map"></div><div id="status" class="status">No tracks loaded</div></section>
   </main>`;
@@ -79,10 +96,10 @@ const redoBtn = document.querySelector<HTMLButtonElement>('#redo')!;
 const discontinuitiesEl = document.querySelector<HTMLDivElement>('#discontinuities')!;
 const status = document.querySelector<HTMLDivElement>('#status')!;
 const baseMapSelect = document.querySelector<HTMLSelectElement>('#baseMap')!;
-const stylePresetSelect = document.querySelector<HTMLSelectElement>('#stylePreset')!;
+const routeAppearanceSelect = document.querySelector<HTMLSelectElement>('#routeAppearance')!;
 
-const initialPreset = map.setStylePreset(stylePresetSelect.value);
-baseMapSelect.value = initialPreset.preferredBaseProviderId;
+map.setRouteAppearance(routeAppearanceSelect.value);
+baseMapSelect.value = map.getBaseProviderId();
 
 input.addEventListener('change', async () => {
   const files = Array.from(input.files ?? []);
@@ -108,10 +125,7 @@ baseMapSelect.addEventListener('change', () => {
     baseMapSelect.disabled = false;
   });
 });
-stylePresetSelect.addEventListener('change', () => {
-  const preset = map.setStylePreset(stylePresetSelect.value);
-  baseMapSelect.value = preset.preferredBaseProviderId;
-});
+routeAppearanceSelect.addEventListener('change', () => map.setRouteAppearance(routeAppearanceSelect.value));
 
 document.querySelectorAll<HTMLInputElement>('[data-layer-visible]').forEach((checkbox) => {
   checkbox.addEventListener('change', () => {
