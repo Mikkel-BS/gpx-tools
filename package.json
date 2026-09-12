@@ -12,6 +12,7 @@
   "dependencies": {
     "jsqr": "1.4.0",
     "ol": "^10.10.0",
+    "ol-mapbox-style": "13.4.3",
     "qrcode-generator": "1.4.4"
   },
   "devDependencies": {
