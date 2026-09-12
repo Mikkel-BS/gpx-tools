@@ -1,9 +1,6 @@
-export interface CartographicStylePreset {
+export interface RouteAppearancePreset {
   id: string;
   label: string;
-  preferredBaseProviderId: string;
-  baseFilter: string;
-  mapBackground: string;
   trackColors: string[];
   trackWidth: number;
   trackOpacity: number;
@@ -17,13 +14,10 @@ export interface CartographicStylePreset {
   selectionHaloWidth: number;
 }
 
-export const cartographicPresets: CartographicStylePreset[] = [
+export const routeAppearancePresets: RouteAppearancePreset[] = [
   {
     id: 'book-light',
     label: 'Book Light',
-    preferredBaseProviderId: 'kartverket-gray',
-    baseFilter: 'grayscale(0.15) saturate(0.68) contrast(0.88) brightness(1.12)',
-    mapBackground: '#eeeae1',
     trackColors: ['#a33b32', '#2e5f9f', '#3f7651', '#73518e'],
     trackWidth: 3,
     trackOpacity: 0.86,
@@ -39,9 +33,6 @@ export const cartographicPresets: CartographicStylePreset[] = [
   {
     id: 'minimal',
     label: 'Minimal',
-    preferredBaseProviderId: 'kartverket-gray',
-    baseFilter: 'grayscale(0.75) saturate(0.25) contrast(0.68) brightness(1.30) opacity(0.72)',
-    mapBackground: '#f4f2ec',
     trackColors: ['#8f3c36', '#45658d', '#52705b', '#725f80'],
     trackWidth: 2.5,
     trackOpacity: 0.72,
@@ -56,10 +47,7 @@ export const cartographicPresets: CartographicStylePreset[] = [
   },
   {
     id: 'topographic',
-    label: 'Topographic',
-    preferredBaseProviderId: 'kartverket-topo',
-    baseFilter: 'none',
-    mapBackground: '#e6e7df',
+    label: 'High contrast',
     trackColors: ['#d12f3f', '#245fd1', '#21824c', '#8540a8'],
     trackWidth: 3.5,
     trackOpacity: 0.94,
@@ -75,9 +63,6 @@ export const cartographicPresets: CartographicStylePreset[] = [
   {
     id: 'monochrome',
     label: 'Monochrome',
-    preferredBaseProviderId: 'kartverket-gray',
-    baseFilter: 'grayscale(1) saturate(0) contrast(0.90) brightness(1.04)',
-    mapBackground: '#e9e9e6',
     trackColors: ['#4a4a4a', '#666666', '#7b7b7b', '#929292'],
     trackWidth: 2.75,
     trackOpacity: 0.78,
@@ -93,9 +78,6 @@ export const cartographicPresets: CartographicStylePreset[] = [
   {
     id: 'print-bw',
     label: 'Print B&W',
-    preferredBaseProviderId: 'kartverket-gray',
-    baseFilter: 'grayscale(1) saturate(0) contrast(1.35) brightness(1.05)',
-    mapBackground: '#ffffff',
     trackColors: ['#777777', '#999999', '#555555', '#b0b0b0'],
     trackWidth: 2,
     trackOpacity: 0.58,
@@ -110,6 +92,6 @@ export const cartographicPresets: CartographicStylePreset[] = [
   },
 ];
 
-export function getCartographicPreset(id: string): CartographicStylePreset {
-  return cartographicPresets.find((preset) => preset.id === id) ?? cartographicPresets[0];
+export function getRouteAppearancePreset(id: string): RouteAppearancePreset {
+  return routeAppearancePresets.find((preset) => preset.id === id) ?? routeAppearancePresets[0];
 }
