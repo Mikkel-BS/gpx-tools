@@ -24,7 +24,7 @@ interface HistorySnapshot {
 
 type Listener = (state: AppState) => void;
 
-class Store {
+export class Store {
   private state: AppState = { tracks: [], pieces: [] };
   private listeners = new Set<Listener>();
   private past: HistorySnapshot[] = [];
@@ -40,6 +40,7 @@ class Store {
 
   addTrack(track: GpxTrack): void {
     if (this.state.tracks.length >= 4) throw new Error('Maximum of four GPX files reached.');
+    this.clearHistory();
     const pointCount = flattenTrack(track).length;
     this.state = {
       ...this.state,
@@ -51,6 +52,7 @@ class Store {
   }
 
   removeTrack(id: string): void {
+    this.clearHistory();
     const tracks = this.state.tracks.filter((track) => track.id !== id);
     const pieces = this.state.pieces.filter((piece) => piece.trackId !== id);
     const selectedTrackId = this.state.selectedTrackId === id ? tracks[0]?.id : this.state.selectedTrackId;
@@ -186,6 +188,11 @@ class Store {
     this.emit();
   }
 
+  private clearHistory(): void {
+    this.past = [];
+    this.future = [];
+  }
+
   private snapshot(): void {
     this.past.push(this.makeSnapshot());
     if (this.past.length > 100) this.past.shift();
@@ -193,7 +200,7 @@ class Store {
 
   private makeSnapshot(): HistorySnapshot {
     return {
-      tracks: this.state.tracks.map((track) => this.cloneTrack(track)),
+      tracks: this.state.tracks.map((track) => this.cloneTrackForHistory(track)),
       pieces: this.state.pieces.map((piece) => ({ ...piece })),
       selection: this.state.selection ? { ...this.state.selection } : undefined,
       selectedPieceId: this.state.selectedPieceId,
@@ -203,7 +210,7 @@ class Store {
   private restoreSnapshot(snapshot: HistorySnapshot): void {
     this.state = {
       ...this.state,
-      tracks: snapshot.tracks.map((track) => this.cloneTrack(track)),
+      tracks: snapshot.tracks.map((track) => this.cloneTrackForHistory(track)),
       pieces: snapshot.pieces.map((piece) => ({ ...piece })),
       selection: snapshot.selection ? { ...snapshot.selection } : undefined,
       selectedPieceId: snapshot.selectedPieceId,
@@ -211,10 +218,11 @@ class Store {
     this.emit();
   }
 
-  private cloneTrack(track: GpxTrack): GpxTrack {
+  private cloneTrackForHistory(track: GpxTrack): GpxTrack {
     return {
       ...track,
-      originalSegments: cloneSegments(track.originalSegments),
+      // originalSegments are immutable by contract, so history snapshots safely share them.
+      originalSegments: track.originalSegments,
       segments: cloneSegments(track.segments),
     };
   }
