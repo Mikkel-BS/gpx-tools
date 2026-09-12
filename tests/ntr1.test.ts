@@ -30,7 +30,16 @@ function track(id: string, segments: GpxPoint[][]): GpxTrack {
 }
 
 function piece(id: string, trackId: string, startIndex: number, endIndex: number, reversed = false): RoutePiece {
-  return { id, trackId, startIndex, endIndex, reversed };
+  return {
+    id,
+    trackId,
+    segmentIndex: 0,
+    startPointIndex: startIndex,
+    endPointIndex: endIndex,
+    startIndex,
+    endIndex,
+    reversed,
+  };
 }
 
 describe('NTR1 primitives', () => {
@@ -192,7 +201,7 @@ describe('NTR1 segment safety', () => {
 
 describe('NTR1 QR fitting', () => {
   it('produces a valid QR with expected version constraints', () => {
-    const symbol = createNtr1Qr(CANONICAL, 'Q');
+    const symbol = createNtr1Qr(CANICAL, 'Q');
     expect(symbol.version).toBeGreaterThanOrEqual(1);
     expect(symbol.version).toBeLessThanOrEqual(40);
     expect(symbol.modules).toBe(17 + 4 * symbol.version);
