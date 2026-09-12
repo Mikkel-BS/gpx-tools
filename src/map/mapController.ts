@@ -1,5 +1,6 @@
 import Map from 'ol/Map.js';
 import View from 'ol/View.js';
+import LayerGroup from 'ol/layer/Group.js';
 import TileLayer from 'ol/layer/Tile.js';
 import VectorLayer from 'ol/layer/Vector.js';
 import XYZ from 'ol/source/XYZ.js';
@@ -12,9 +13,12 @@ import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat } from 'ol/proj.js';
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style.js';
 import type { Coordinate } from 'ol/coordinate.js';
+import { apply } from 'ol-mapbox-style';
 import { flattenTrack, getPiecePoints, indicesShareSegment, type RoutePiece } from '../editor/model';
 import type { GpxPoint, GpxTrack } from '../gpx/types';
+import { getBaseMapDefinition } from './sources/baseMaps';
 import { getRasterProvider, rasterProviders } from './sources/providers';
+import { loadVectorStyle } from './sources/vectorStyles';
 import { getCartographicPreset, type CartographicStylePreset } from './styles/presets';
 
 type SelectionHandle = 'start' | 'end';
@@ -27,13 +31,15 @@ export class MapController {
   private selectionLayer: VectorLayer<VectorSource>;
   private compositeLayer: VectorLayer<VectorSource>;
   private ntr1PreviewLayer: VectorLayer<VectorSource>;
-  private baseLayer: TileLayer<XYZ>;
+  private baseGroup: LayerGroup;
+  private rasterBaseLayer?: TileLayer<XYZ>;
   private selectionTrack?: GpxTrack;
   private selectionProjected: Coordinate[] = [];
   private selectionChangeHandler?: (handle: SelectionHandle, index: number) => void;
   private trackSignature = '';
   private preset: CartographicStylePreset = getCartographicPreset('book-light');
   private baseProviderId = rasterProviders[0].id;
+  private baseRequestToken = 0;
   private exportFrame: HTMLDivElement;
   private exportFrameAspect?: number;
   private exportFramePixelSize?: [number, number];
@@ -41,17 +47,16 @@ export class MapController {
 
   constructor(target: HTMLElement) {
     this.target = target;
-    this.baseLayer = new TileLayer({
-      source: this.makeRasterSource(this.baseProviderId),
-      zIndex: 0,
-    });
+    const initialRaster = this.makeRasterLayer(this.baseProviderId);
+    this.rasterBaseLayer = initialRaster;
+    this.baseGroup = new LayerGroup({ layers: [initialRaster], zIndex: 0 });
     this.trackLayer = new VectorLayer({ source: new VectorSource(), zIndex: 10 });
     this.compositeLayer = new VectorLayer({ source: new VectorSource(), zIndex: 20 });
     this.ntr1PreviewLayer = new VectorLayer({ source: new VectorSource(), zIndex: 25 });
     this.selectionLayer = new VectorLayer({ source: new VectorSource(), zIndex: 30 });
     this.map = new Map({
       target,
-      layers: [this.baseLayer, this.trackLayer, this.compositeLayer, this.ntr1PreviewLayer, this.selectionLayer],
+      layers: [this.baseGroup, this.trackLayer, this.compositeLayer, this.ntr1PreviewLayer, this.selectionLayer],
       view: new View({ center: fromLonLat([10.75, 59.91]), zoom: 8 }),
     });
 
@@ -63,15 +68,6 @@ export class MapController {
       this.resizeObserver = new ResizeObserver(() => this.updateExportFrame());
       this.resizeObserver.observe(this.target);
     }
-
-    this.baseLayer.on('prerender', (event) => {
-      const context = event.context;
-      if (context instanceof CanvasRenderingContext2D) context.filter = this.preset.baseFilter;
-    });
-    this.baseLayer.on('postrender', (event) => {
-      const context = event.context;
-      if (context instanceof CanvasRenderingContext2D) context.filter = 'none';
-    });
 
     const translate = new Translate({
       layers: [this.selectionLayer],
@@ -94,11 +90,32 @@ export class MapController {
     this.selectionChangeHandler = handler;
   }
 
-  setBaseProvider(providerId: string): void {
-    const provider = getRasterProvider(providerId);
+  async setBaseProvider(providerId: string): Promise<void> {
+    const provider = getBaseMapDefinition(providerId);
+    const requestToken = ++this.baseRequestToken;
+    const visible = this.baseGroup.getVisible();
+    const opacity = this.baseGroup.getOpacity();
+
+    if (provider.kind === 'raster') {
+      const layer = this.makeRasterLayer(provider.id);
+      const group = new LayerGroup({ layers: [layer], zIndex: 0, visible, opacity });
+      this.replaceBaseGroup(group);
+      this.rasterBaseLayer = layer;
+      this.baseProviderId = provider.id;
+      this.applyPresetComposition();
+      return;
+    }
+
+    const style = await loadVectorStyle(provider);
+    if (requestToken !== this.baseRequestToken) return;
+    const group = new LayerGroup({ zIndex: 0, visible, opacity });
+    await apply(group, style);
+    if (requestToken !== this.baseRequestToken) return;
+    this.replaceBaseGroup(group);
+    this.rasterBaseLayer = undefined;
     this.baseProviderId = provider.id;
-    this.baseLayer.setSource(this.makeRasterSource(provider.id));
-    this.baseLayer.changed();
+    this.target.style.background = this.preset.mapBackground;
+    this.map.render();
   }
 
   getBaseProviderId(): string { return this.baseProviderId; }
@@ -143,7 +160,7 @@ export class MapController {
   setStylePreset(presetId: string): CartographicStylePreset {
     this.preset = getCartographicPreset(presetId);
     if (this.baseProviderId !== this.preset.preferredBaseProviderId) {
-      this.setBaseProvider(this.preset.preferredBaseProviderId);
+      void this.setBaseProvider(this.preset.preferredBaseProviderId).catch((error) => console.warn('Could not switch preferred basemap', error));
     }
     this.applyPresetComposition();
     this.restyleTracks();
@@ -234,6 +251,11 @@ export class MapController {
     source.addFeature(feature);
   }
 
+  private replaceBaseGroup(group: LayerGroup): void {
+    this.map.getLayers().setAt(0, group);
+    this.baseGroup = group;
+  }
+
   private updateExportFrame(): void {
     const aspect = this.exportFrameAspect;
     if (!aspect) {
@@ -259,7 +281,20 @@ export class MapController {
 
   private applyPresetComposition(): void {
     this.target.style.background = this.preset.mapBackground;
-    this.baseLayer.changed();
+    this.rasterBaseLayer?.changed();
+  }
+
+  private makeRasterLayer(providerId: string): TileLayer<XYZ> {
+    const layer = new TileLayer({ source: this.makeRasterSource(providerId), zIndex: 0 });
+    layer.on('prerender', (event) => {
+      const context = event.context;
+      if (context instanceof CanvasRenderingContext2D) context.filter = this.preset.baseFilter;
+    });
+    layer.on('postrender', (event) => {
+      const context = event.context;
+      if (context instanceof CanvasRenderingContext2D) context.filter = 'none';
+    });
+    return layer;
   }
 
   private makeRasterSource(providerId: string): XYZ {
@@ -272,8 +307,8 @@ export class MapController {
     });
   }
 
-  private getLayer(layerId: MapLayerId): TileLayer<XYZ> | VectorLayer<VectorSource> {
-    if (layerId === 'base') return this.baseLayer;
+  private getLayer(layerId: MapLayerId): LayerGroup | VectorLayer<VectorSource> {
+    if (layerId === 'base') return this.baseGroup;
     if (layerId === 'tracks') return this.trackLayer;
     if (layerId === 'combined') return this.compositeLayer;
     return this.selectionLayer;
