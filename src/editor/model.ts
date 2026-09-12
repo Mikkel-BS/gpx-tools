@@ -3,6 +3,10 @@ import type { GpxPoint, GpxSegment, GpxTrack } from '../gpx/types';
 export interface RoutePiece {
   id: string;
   trackId: string;
+  segmentIndex: number;
+  startPointIndex: number;
+  endPointIndex: number;
+  /** Flat indexes are retained only for UI display/backward compatibility. Geometry must use segment-local indexes. */
   startIndex: number;
   endIndex: number;
   reversed: boolean;
@@ -17,6 +21,10 @@ export interface Discontinuity {
 export interface FlatIndexLocation {
   segmentIndex: number;
   pointIndex: number;
+}
+
+export interface DerivedRoute {
+  segments: GpxSegment[];
 }
 
 export function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
@@ -37,6 +45,15 @@ export function locateFlatIndex(track: GpxTrack, flatIndex: number): FlatIndexLo
     offset += count;
   }
   return undefined;
+}
+
+export function flatIndexForLocation(track: GpxTrack, location: FlatIndexLocation): number | undefined {
+  if (location.segmentIndex < 0 || location.segmentIndex >= track.segments.length) return undefined;
+  const segment = track.segments[location.segmentIndex];
+  if (location.pointIndex < 0 || location.pointIndex >= segment.points.length) return undefined;
+  let offset = 0;
+  for (let index = 0; index < location.segmentIndex; index += 1) offset += track.segments[index].points.length;
+  return offset + location.pointIndex;
 }
 
 export function indicesShareSegment(track: GpxTrack, a: number, b: number): boolean {
@@ -92,9 +109,14 @@ export function createPiece(track: GpxTrack, startIndex: number, endIndex: numbe
   const end = clampFlatIndex(track, endIndex);
   if (start === end) throw new Error('A route piece must contain at least two points.');
   requireSingleSegmentRange(track, start, end, 'Route piece');
+  const startLocation = locateFlatIndex(track, start)!;
+  const endLocation = locateFlatIndex(track, end)!;
   return {
     id: crypto.randomUUID(),
     trackId: track.id,
+    segmentIndex: startLocation.segmentIndex,
+    startPointIndex: Math.min(startLocation.pointIndex, endLocation.pointIndex),
+    endPointIndex: Math.max(startLocation.pointIndex, endLocation.pointIndex),
     startIndex: Math.min(start, end),
     endIndex: Math.max(start, end),
     reversed: start > end,
@@ -103,13 +125,31 @@ export function createPiece(track: GpxTrack, startIndex: number, endIndex: numbe
 
 export function getPiecePoints(piece: RoutePiece, tracks: GpxTrack[]): GpxPoint[] {
   const track = tracks.find((item) => item.id === piece.trackId);
-  if (!track || !indicesShareSegment(track, piece.startIndex, piece.endIndex)) return [];
-  const points = flattenTrack(track).slice(piece.startIndex, piece.endIndex + 1);
+  const segment = track?.segments[piece.segmentIndex];
+  if (!segment) return [];
+  const start = Math.max(0, Math.min(segment.points.length - 1, piece.startPointIndex));
+  const end = Math.max(0, Math.min(segment.points.length - 1, piece.endPointIndex));
+  if (start > end) return [];
+  const points = segment.points.slice(start, end + 1);
   return piece.reversed ? [...points].reverse() : points;
 }
 
+export function buildCompositeSegments(pieces: RoutePiece[], tracks: GpxTrack[]): GpxSegment[] {
+  return pieces
+    .map((piece) => ({ points: getPiecePoints(piece, tracks).map((point) => ({ ...point })) }))
+    .filter((segment) => segment.points.length >= 2);
+}
+
+/** @deprecated Prefer buildCompositeSegments so discontinuities remain explicit. */
 export function buildComposite(pieces: RoutePiece[], tracks: GpxTrack[]): GpxPoint[] {
-  return pieces.flatMap((piece) => getPiecePoints(piece, tracks));
+  return buildCompositeSegments(pieces, tracks).flatMap((segment) => segment.points);
+}
+
+export function routePiecesAreAdjacent(a: RoutePiece, b: RoutePiece): boolean {
+  if (a.trackId !== b.trackId || a.segmentIndex !== b.segmentIndex) return false;
+  const orientedEnd = a.reversed ? a.startPointIndex : a.endPointIndex;
+  const orientedStart = b.reversed ? b.endPointIndex : b.startPointIndex;
+  return Math.abs(orientedEnd - orientedStart) === 1;
 }
 
 export function haversineMeters(a: GpxPoint, b: GpxPoint): number {
