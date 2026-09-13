@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chooseNiceScaleDistance } from '../src/export/decorations';
 import { makeImageDimensions, mmToPixels } from '../src/export/layout';
+import { applyImageStylePreset, defaultImageExportSettings, imageStylePresets } from '../src/export/settings';
 import { getBaseMapDefinition } from '../src/map/sources/baseMaps';
 import { getRasterProvider } from '../src/map/sources/providers';
 import { vectorStyleProviders } from '../src/map/sources/vectorStyles';
@@ -22,6 +23,21 @@ describe('publication image export', () => {
     expect(chooseNiceScaleDistance(78)).toBe(50);
     expect(chooseNiceScaleDistance(240)).toBe(200);
     expect(chooseNiceScaleDistance(720)).toBe(500);
+  });
+
+  it('provides a small reusable publication style library without overwriting project content', () => {
+    expect(imageStylePresets.map((preset) => preset.id)).toEqual([
+      'book-light',
+      'minimal-editorial',
+      'monochrome-print',
+      'high-contrast-trail',
+    ]);
+    const project = { ...defaultImageExportSettings(), title: 'My route', widthMm: 177 };
+    const styled = applyImageStylePreset(project, 'monochrome-print');
+    expect(styled.title).toBe('My route');
+    expect(styled.widthMm).toBe(177);
+    expect(styled.routeColor).toBe('#000000');
+    expect(styled.presetId).toBe('monochrome-print');
   });
 
   it('allows OSM publication export only with attribution', () => {
