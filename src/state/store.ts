@@ -4,6 +4,7 @@ import {
   flattenTrack,
   joinTouchingSegments,
   resetTrack,
+  snapJoinSegmentBoundary,
   splitTrackAtFlatIndex,
   trimTrack,
   type RoutePiece,
@@ -142,8 +143,15 @@ export class Store {
   joinTouchingSelectedTrackSegments(): void {
     const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
     if (!track) return;
-    if (!countJoinableSegmentBoundaries(track)) throw new Error('No adjacent track segments share an exact endpoint, so there is nothing safe to join.');
+    if (!countJoinableSegmentBoundaries(track)) throw new Error('No adjacent track segments share an exact endpoint, so there is nothing safe to auto-join.');
     const joined = joinTouchingSegments(track);
+    this.replaceEditedTrack(track.id, joined, 0, Math.max(0, flattenTrack(joined).length - 1));
+  }
+
+  snapJoinSelectedTrackSegments(boundaryIndex: number, maxDistanceMeters = 10): void {
+    const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
+    if (!track) return;
+    const joined = snapJoinSegmentBoundary(track, boundaryIndex, maxDistanceMeters);
     this.replaceEditedTrack(track.id, joined, 0, Math.max(0, flattenTrack(joined).length - 1));
   }
 
