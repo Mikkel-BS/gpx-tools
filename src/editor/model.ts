@@ -83,6 +83,10 @@ function requireSingleSegmentRange(track: GpxTrack, start: number, end: number, 
   }
 }
 
+function sameCoordinate(a: GpxPoint, b: GpxPoint): boolean {
+  return a.lat === b.lat && a.lon === b.lon;
+}
+
 export function trimTrack(track: GpxTrack, startIndex: number, endIndex: number): GpxTrack {
   const points = flattenTrack(track);
   if (points.length < 2) throw new Error('Track must contain at least two points.');
@@ -100,6 +104,58 @@ export function trimTrack(track: GpxTrack, startIndex: number, endIndex: number)
 
 export function resetTrack(track: GpxTrack): GpxTrack {
   return { ...track, segments: cloneSegments(track.originalSegments) };
+}
+
+export function canSplitTrackAtFlatIndex(track: GpxTrack, flatIndex: number): boolean {
+  const location = locateFlatIndex(track, Math.round(flatIndex));
+  if (!location) return false;
+  const segment = track.segments[location.segmentIndex];
+  return location.pointIndex > 0 && location.pointIndex < segment.points.length - 1;
+}
+
+/** Split one working segment at an existing point. The split point is retained as the end/start of both new segments. */
+export function splitTrackAtFlatIndex(track: GpxTrack, flatIndex: number): GpxTrack {
+  const index = clampFlatIndex(track, flatIndex);
+  const location = locateFlatIndex(track, index);
+  if (!location || !canSplitTrackAtFlatIndex(track, index)) {
+    throw new Error('Split point must be inside a track segment, not at one of its endpoints.');
+  }
+  const source = track.segments[location.segmentIndex];
+  const left: GpxSegment = { points: source.points.slice(0, location.pointIndex + 1).map((point) => ({ ...point })) };
+  const right: GpxSegment = { points: source.points.slice(location.pointIndex).map((point) => ({ ...point })) };
+  const segments = cloneSegments(track.segments);
+  segments.splice(location.segmentIndex, 1, left, right);
+  return { ...track, segments };
+}
+
+export function countJoinableSegmentBoundaries(track: GpxTrack): number {
+  let count = 0;
+  for (let index = 0; index < track.segments.length - 1; index += 1) {
+    const left = track.segments[index].points.at(-1);
+    const right = track.segments[index + 1].points[0];
+    if (left && right && sameCoordinate(left, right)) count += 1;
+  }
+  return count;
+}
+
+/** Join only adjacent working segments whose boundary coordinates are exactly identical. No gap threshold is used. */
+export function joinTouchingSegments(track: GpxTrack): GpxTrack {
+  if (!countJoinableSegmentBoundaries(track)) {
+    throw new Error('No adjacent track segments share an exact endpoint, so there is nothing safe to join.');
+  }
+  const joined: GpxSegment[] = [];
+  for (const segment of track.segments) {
+    if (!segment.points.length) continue;
+    const previous = joined.at(-1);
+    const previousEnd = previous?.points.at(-1);
+    const nextStart = segment.points[0];
+    if (previous && previousEnd && sameCoordinate(previousEnd, nextStart)) {
+      previous.points.push(...segment.points.slice(1).map((point) => ({ ...point })));
+    } else {
+      joined.push({ points: segment.points.map((point) => ({ ...point })) });
+    }
+  }
+  return { ...track, segments: joined };
 }
 
 export function createPiece(track: GpxTrack, startIndex: number, endIndex: number): RoutePiece {
