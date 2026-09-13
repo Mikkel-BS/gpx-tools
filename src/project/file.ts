@@ -33,7 +33,7 @@ export interface ProjectDocument {
   image: ImageExportSettings;
 }
 
-interface ProjectTrackV2 {
+interface ProjectTrack {
   id: string;
   fileName: string;
   importedAt: number;
@@ -43,11 +43,11 @@ interface ProjectTrackV2 {
   workingXml?: string;
 }
 
-interface ProjectWireV2 {
+interface ProjectWire {
   format: typeof PROJECT_FORMAT;
-  version: 2;
+  version: typeof PROJECT_VERSION;
   savedAt: string;
-  tracks: ProjectTrackV2[];
+  tracks: ProjectTrack[];
   selectedTrackId?: string;
   selection?: TrackSelection;
   pieces: RoutePiece[];
@@ -77,8 +77,8 @@ function clonePiece(piece: RoutePiece): RoutePiece {
   return { ...piece };
 }
 
-function toWireTrack(track: GpxTrack): ProjectTrackV2 {
-  const result: ProjectTrackV2 = {
+function toWireTrack(track: GpxTrack): ProjectTrack {
+  const result: ProjectTrack = {
     id: track.id,
     fileName: track.fileName,
     importedAt: track.importedAt,
@@ -113,9 +113,9 @@ export function createProjectDocument(state: AppState, map: ProjectMapState, ima
 
 /** Project files are intentionally minified; embedded original GPX remains standard, recognizable GPX text. */
 export function serializeProject(state: AppState, map: ProjectMapState, image = defaultImageExportSettings()): string {
-  const wire: ProjectWireV2 = {
+  const wire: ProjectWire = {
     format: PROJECT_FORMAT,
-    version: 2,
+    version: PROJECT_VERSION,
     savedAt: new Date().toISOString(),
     tracks: state.tracks.map(toWireTrack),
     selectedTrackId: state.selectedTrackId,
@@ -201,7 +201,10 @@ function parseMap(value: unknown): ProjectMapState {
   };
 }
 
-function bool(value: unknown, fallback: boolean): boolean { return typeof value === 'boolean' ? value : fallback; }
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
 }
@@ -256,7 +259,7 @@ function validateState(state: AppState): void {
   if (state.selectedPieceId && !state.pieces.some((item) => item.id === state.selectedPieceId)) throw new Error('Selected route piece does not exist in this project.');
 }
 
-function parseV2(root: Record<string, unknown>): ProjectDocument {
+function parseCurrentProject(root: Record<string, unknown>): ProjectDocument {
   if (!Array.isArray(root.tracks)) throw new Error('tracks must be an array.');
   const tracks: GpxTrack[] = root.tracks.map((value, index) => {
     const item = record(value, `tracks[${index}]`);
@@ -279,7 +282,9 @@ function parseV2(root: Record<string, unknown>): ProjectDocument {
       segments,
     };
   });
-  const pieces = Array.isArray(root.pieces) ? root.pieces.map(piece) : (() => { throw new Error('pieces must be an array.'); })();
+
+  if (!Array.isArray(root.pieces)) throw new Error('pieces must be an array.');
+  const pieces = root.pieces.map(piece);
   const state: AppState = {
     tracks,
     selectedTrackId: root.selectedTrackId === undefined ? undefined : stringValue(root.selectedTrackId, 'selectedTrackId'),
@@ -298,59 +303,6 @@ function parseV2(root: Record<string, unknown>): ProjectDocument {
   };
 }
 
-/** Backward-compatible loader for v1 project files. New saves always use v2. */
-function parseV1(root: Record<string, unknown>): ProjectDocument {
-  const stateRaw = record(root.state, 'state');
-  if (!Array.isArray(stateRaw.tracks)) throw new Error('state.tracks must be an array.');
-  const tracks: GpxTrack[] = stateRaw.tracks.map((value, index) => {
-    const item = record(value, `state.tracks[${index}]`);
-    const fileName = stringValue(item.fileName, `state.tracks[${index}].fileName`);
-    const originalXml = typeof item.originalXml === 'string' && item.originalXml ? item.originalXml : undefined;
-    if (!originalXml) throw new Error('Legacy project track is missing its original GPX XML.');
-    const originalParsed = parseGpx(originalXml, fileName);
-    const legacySegments = item.segments;
-    let workingSegments = originalParsed.segments;
-    if (Array.isArray(legacySegments)) {
-      const coordinateXml = segmentsToCoordinateOnlyGpx(legacySegments.map((segmentValue, segmentIndex) => {
-        const segment = record(segmentValue, `state.tracks[${index}].segments[${segmentIndex}]`);
-        if (!Array.isArray(segment.points)) throw new Error('Legacy project segment points are invalid.');
-        return { points: segment.points.map((pointValue, pointIndex) => {
-          const p = record(pointValue, `point ${pointIndex}`);
-          const lat = finiteNumber(p.lat, 'lat');
-          const lon = finiteNumber(p.lon, 'lon');
-          return { lat, lon };
-        }) };
-      }));
-      workingSegments = parseGpx(coordinateXml, fileName).segments;
-    }
-    return {
-      id: stringValue(item.id, `state.tracks[${index}].id`),
-      fileName,
-      importedAt: finiteNumber(item.importedAt, `state.tracks[${index}].importedAt`),
-      originalXml,
-      originalSegments: originalParsed.originalSegments,
-      segments: workingSegments,
-    };
-  });
-  const pieces = Array.isArray(stateRaw.pieces) ? stateRaw.pieces.map(piece) : [];
-  const state: AppState = {
-    tracks,
-    selectedTrackId: stateRaw.selectedTrackId === undefined ? undefined : stringValue(stateRaw.selectedTrackId, 'state.selectedTrackId'),
-    selection: selection(stateRaw.selection),
-    pieces,
-    selectedPieceId: stateRaw.selectedPieceId === undefined ? undefined : stringValue(stateRaw.selectedPieceId, 'state.selectedPieceId'),
-  };
-  validateState(state);
-  return {
-    format: PROJECT_FORMAT,
-    version: PROJECT_VERSION,
-    savedAt: typeof root.savedAt === 'string' ? root.savedAt : '',
-    state,
-    map: parseMap(root.map),
-    image: defaultImageExportSettings(),
-  };
-}
-
 export function parseProject(text: string): ProjectDocument {
   let parsed: unknown;
   try {
@@ -360,7 +312,6 @@ export function parseProject(text: string): ProjectDocument {
   }
   const root = record(parsed, 'Project');
   if (root.format !== PROJECT_FORMAT) throw new Error('This is not a GPX & Map Tool project file.');
-  if (root.version === 2) return parseV2(root);
-  if (root.version === 1) return parseV1(root);
-  throw new Error(`Unsupported project version: ${String(root.version)}.`);
+  if (root.version !== PROJECT_VERSION) throw new Error(`Unsupported project version: ${String(root.version)}.`);
+  return parseCurrentProject(root);
 }
