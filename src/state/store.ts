@@ -1,4 +1,13 @@
-import { cloneSegments, flattenTrack, resetTrack, trimTrack, type RoutePiece } from '../editor/model';
+import {
+  cloneSegments,
+  countJoinableSegmentBoundaries,
+  flattenTrack,
+  joinTouchingSegments,
+  resetTrack,
+  splitTrackAtFlatIndex,
+  trimTrack,
+  type RoutePiece,
+} from '../editor/model';
 import type { GpxTrack } from '../gpx/types';
 
 export interface TrackSelection {
@@ -36,6 +45,19 @@ export class Store {
     this.listeners.add(listener);
     listener(this.state);
     return () => this.listeners.delete(listener);
+  }
+
+  replaceState(state: AppState): void {
+    if (state.tracks.length > 4) throw new Error('Maximum of four GPX files reached.');
+    this.clearHistory();
+    this.state = {
+      tracks: state.tracks.map((track) => this.cloneTrackForProject(track)),
+      selectedTrackId: state.selectedTrackId,
+      selection: state.selection ? { ...state.selection } : undefined,
+      pieces: state.pieces.map((piece) => ({ ...piece })),
+      selectedPieceId: state.selectedPieceId,
+    };
+    this.emit();
   }
 
   addTrack(track: GpxTrack): void {
@@ -99,36 +121,30 @@ export class Store {
     const selection = this.state.selection;
     if (!track || !selection || selection.trackId !== track.id) return;
     const trimmed = trimTrack(track, selection.startIndex, selection.endIndex);
-    const pieces = this.state.pieces.filter((piece) => piece.trackId !== track.id);
-    this.snapshot();
-    this.future = [];
-    const pointCount = flattenTrack(trimmed).length;
-    this.state = {
-      ...this.state,
-      tracks: this.state.tracks.map((item) => item.id === track.id ? trimmed : item),
-      pieces,
-      selection: { trackId: track.id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) },
-      selectedPieceId: pieces.some((piece) => piece.id === this.state.selectedPieceId) ? this.state.selectedPieceId : undefined,
-    };
-    this.emit();
+    this.replaceEditedTrack(track.id, trimmed, 0, Math.max(0, flattenTrack(trimmed).length - 1));
   }
 
   resetSelectedTrack(): void {
     const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
     if (!track) return;
     const reset = resetTrack(track);
-    const pieces = this.state.pieces.filter((piece) => piece.trackId !== track.id);
-    this.snapshot();
-    this.future = [];
-    const pointCount = flattenTrack(reset).length;
-    this.state = {
-      ...this.state,
-      tracks: this.state.tracks.map((item) => item.id === track.id ? reset : item),
-      pieces,
-      selection: { trackId: track.id, startIndex: 0, endIndex: Math.max(0, pointCount - 1) },
-      selectedPieceId: pieces.some((piece) => piece.id === this.state.selectedPieceId) ? this.state.selectedPieceId : undefined,
-    };
-    this.emit();
+    this.replaceEditedTrack(track.id, reset, 0, Math.max(0, flattenTrack(reset).length - 1));
+  }
+
+  splitSelectedTrackAtStart(): void {
+    const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
+    const selection = this.state.selection;
+    if (!track || !selection || selection.trackId !== track.id) return;
+    const split = splitTrackAtFlatIndex(track, selection.startIndex);
+    this.replaceEditedTrack(track.id, split, selection.startIndex, selection.startIndex);
+  }
+
+  joinTouchingSelectedTrackSegments(): void {
+    const track = this.state.tracks.find((item) => item.id === this.state.selectedTrackId);
+    if (!track) return;
+    if (!countJoinableSegmentBoundaries(track)) throw new Error('No adjacent track segments share an exact endpoint, so there is nothing safe to join.');
+    const joined = joinTouchingSegments(track);
+    this.replaceEditedTrack(track.id, joined, 0, Math.max(0, flattenTrack(joined).length - 1));
   }
 
   addPiece(piece: RoutePiece): void {
@@ -181,6 +197,20 @@ export class Store {
   canUndo(): boolean { return this.past.length > 0; }
   canRedo(): boolean { return this.future.length > 0; }
 
+  private replaceEditedTrack(trackId: string, edited: GpxTrack, selectionStart: number, selectionEnd: number): void {
+    const pieces = this.state.pieces.filter((piece) => piece.trackId !== trackId);
+    this.snapshot();
+    this.future = [];
+    this.state = {
+      ...this.state,
+      tracks: this.state.tracks.map((item) => item.id === trackId ? edited : item),
+      pieces,
+      selection: { trackId, startIndex: selectionStart, endIndex: selectionEnd },
+      selectedPieceId: pieces.some((piece) => piece.id === this.state.selectedPieceId) ? this.state.selectedPieceId : undefined,
+    };
+    this.emit();
+  }
+
   private commitPieces(pieces: RoutePiece[], selectedPieceId?: string): void {
     this.snapshot();
     this.future = [];
@@ -223,6 +253,14 @@ export class Store {
       ...track,
       // originalSegments are immutable by contract, so history snapshots safely share them.
       originalSegments: track.originalSegments,
+      segments: cloneSegments(track.segments),
+    };
+  }
+
+  private cloneTrackForProject(track: GpxTrack): GpxTrack {
+    return {
+      ...track,
+      originalSegments: cloneSegments(track.originalSegments),
       segments: cloneSegments(track.segments),
     };
   }
