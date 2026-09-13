@@ -1,6 +1,6 @@
 import 'ol/ol.css';
 import './styles.css';
-import { canSplitTrackAtFlatIndex, countJoinableSegmentBoundaries, createPiece, detectDiscontinuities, flattenTrack, getPiecePoints, indicesShareSegment } from './editor/model';
+import { canSplitTrackAtFlatIndex, countJoinableSegmentBoundaries, createPiece, detectDiscontinuities, findSnapJoinCandidates, flattenTrack, getPiecePoints, indicesShareSegment } from './editor/model';
 import { parseGpx } from './gpx/parser';
 import { getTrackStats } from './gpx/stats';
 import { segmentsToCoordinateOnlyGpx, toCoordinateOnlyGpx } from './gpx/serialize';
@@ -21,6 +21,7 @@ const vectorOptions = vectorStyleProviders.map((provider) => `<option value="${p
 const providerOptions = `<optgroup label="Raster maps">${rasterOptions}</optgroup><optgroup label="Curated vector styles">${vectorOptions}</optgroup>`;
 const appearanceOptions = routeAppearancePresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
 const layerIds: MapLayerId[] = ['base', 'tracks', 'combined', 'selection'];
+const SNAP_JOIN_LIMIT_METERS = 10;
 
 app.innerHTML = `
   <main class="shell">
@@ -39,9 +40,10 @@ app.innerHTML = `
         <div class="range-grid"><label>Start point<input id="startIndex" type="number" min="0" step="1" value="0"></label><label>End point<input id="endIndex" type="number" min="0" step="1" value="0"></label></div>
         <p id="selectionHint" class="hint">Select a track first.</p>
         <div class="button-row"><button id="trimTrack" class="secondary" disabled>Trim to selection</button><button id="resetTrack" class="secondary" disabled>Reset track</button></div>
-        <div class="button-row"><button id="splitTrack" class="secondary" disabled>Split at start point</button><button id="joinSegments" class="secondary" disabled>Join touching segments</button></div>
+        <div class="button-row"><button id="splitTrack" class="secondary" disabled>Split at start point</button><button id="joinSegments" class="secondary" disabled>Auto-join exact</button></div>
+        <button id="snapJoinSegments" class="secondary" disabled>Snap & join nearby segments</button>
         <button id="addPiece" class="primary" disabled>Add selection to combined route</button>
-        <p class="hint">Split uses the green start point. Join merges only adjacent segments with exactly matching endpoints. Editing a track clears combined-route pieces sourced from it.</p>
+        <p class="hint">Auto-join only merges exact matching endpoints. Snap join is explicit: for an adjacent boundary within 10 m, it moves the second segment's first point onto the first segment's endpoint, then joins them. No connector line is invented. Editing a track clears combined-route pieces sourced from it.</p>
       </section>
       <section><div class="section-title"><h2>Combined route</h2><div class="history"><button id="undo" title="Undo" disabled>↶</button><button id="redo" title="Redo" disabled>↷</button></div></div><div id="pieceList"></div><div id="discontinuities" class="warnings"></div><button id="clearPieces" class="secondary" disabled>Clear route</button></section>
       <section class="map-controls">
@@ -102,6 +104,7 @@ const trimTrackBtn = document.querySelector<HTMLButtonElement>('#trimTrack')!;
 const resetTrackBtn = document.querySelector<HTMLButtonElement>('#resetTrack')!;
 const splitTrackBtn = document.querySelector<HTMLButtonElement>('#splitTrack')!;
 const joinSegmentsBtn = document.querySelector<HTMLButtonElement>('#joinSegments')!;
+const snapJoinSegmentsBtn = document.querySelector<HTMLButtonElement>('#snapJoinSegments')!;
 const selectionHint = document.querySelector<HTMLParagraphElement>('#selectionHint')!;
 const cleanExportBtn = document.querySelector<HTMLButtonElement>('#cleanExport')!;
 const routeExportBtn = document.querySelector<HTMLButtonElement>('#routeExport')!;
@@ -253,6 +256,26 @@ joinSegmentsBtn.addEventListener('click', () => {
     alert(error instanceof Error ? error.message : String(error));
   }
 });
+snapJoinSegmentsBtn.addEventListener('click', () => {
+  const state = store.get();
+  const track = state.tracks.find((item) => item.id === state.selectedTrackId);
+  const candidate = track ? findSnapJoinCandidates(track, SNAP_JOIN_LIMIT_METERS)[0] : undefined;
+  if (!candidate) return;
+  const leftSegment = candidate.boundaryIndex + 1;
+  const rightSegment = candidate.boundaryIndex + 2;
+  const distance = candidate.distanceMeters.toFixed(candidate.distanceMeters < 1 ? 2 : 1);
+  const approved = window.confirm(
+    `Segments ${leftSegment} and ${rightSegment} end ${distance} m apart.\n\n` +
+    `Snap the start of segment ${rightSegment} onto the end of segment ${leftSegment} and join them?\n\n` +
+    'This moves one recorded endpoint. No connector line will be created, and the edit can be undone.'
+  );
+  if (!approved) return;
+  try {
+    store.snapJoinSelectedTrackSegments(candidate.boundaryIndex, SNAP_JOIN_LIMIT_METERS);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : String(error));
+  }
+});
 
 cleanExportBtn.addEventListener('click', () => {
   const state = store.get();
@@ -284,6 +307,7 @@ store.subscribe((state) => {
   const selectionWithinSegment = Boolean(selectedTrack && selection && indicesShareSegment(selectedTrack, selection.startIndex, selection.endIndex));
   const splitAvailable = Boolean(selectedTrack && selection && canSplitTrackAtFlatIndex(selectedTrack, selection.startIndex));
   const joinableBoundaries = selectedTrack ? countJoinableSegmentBoundaries(selectedTrack) : 0;
+  const snapCandidate = selectedTrack ? findSnapJoinCandidates(selectedTrack, SNAP_JOIN_LIMIT_METERS)[0] : undefined;
   cleanExportBtn.disabled = !selectedTrack;
   routeExportBtn.disabled = compositePointCount < 2;
   clearPiecesBtn.disabled = state.pieces.length === 0;
@@ -294,7 +318,11 @@ store.subscribe((state) => {
   resetTrackBtn.disabled = !selectedTrack || !selectedTrack.originalSegments;
   splitTrackBtn.disabled = !splitAvailable;
   joinSegmentsBtn.disabled = joinableBoundaries === 0;
-  joinSegmentsBtn.textContent = joinableBoundaries > 1 ? `Join touching segments (${joinableBoundaries})` : 'Join touching segments';
+  joinSegmentsBtn.textContent = joinableBoundaries > 1 ? `Auto-join exact (${joinableBoundaries})` : 'Auto-join exact';
+  snapJoinSegmentsBtn.disabled = !snapCandidate;
+  snapJoinSegmentsBtn.textContent = snapCandidate
+    ? `Snap & join nearby (${snapCandidate.distanceMeters.toFixed(snapCandidate.distanceMeters < 1 ? 2 : 1)} m)`
+    : 'Snap & join nearby segments';
 
   if (selectedTrack && selection) {
     const pointCount = flattenTrack(selectedTrack).length;
