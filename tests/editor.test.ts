@@ -4,8 +4,10 @@ import {
   canSplitTrackAtFlatIndex,
   countJoinableSegmentBoundaries,
   createPiece,
+  findSnapJoinCandidates,
   getPiecePoints,
   joinTouchingSegments,
+  snapJoinSegmentBoundary,
   splitTrackAtFlatIndex,
 } from '../src/editor/model';
 import type { GpxPoint, GpxTrack } from '../src/gpx/types';
@@ -93,6 +95,29 @@ describe('explicit split and join editing', () => {
     expect(joined.segments[0].points).toEqual([a, b, c]);
     expect(joined.segments[1].points).toEqual([d]);
   });
+
+  it('offers nearby non-identical boundaries for explicit snap join and moves only the second endpoint', () => {
+    const leftEnd = { lat: 60, lon: 10 };
+    const rightStart = { lat: 60.00004, lon: 10 }; // about 4.4 m north
+    const rightEnd = { lat: 60.001, lon: 10.001 };
+    const track = makeTrack('snap', [[a, leftEnd], [rightStart, rightEnd]]);
+    const candidates = findSnapJoinCandidates(track, 10);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].boundaryIndex).toBe(0);
+    expect(candidates[0].distanceMeters).toBeGreaterThan(4);
+    expect(candidates[0].distanceMeters).toBeLessThan(5);
+    const joined = snapJoinSegmentBoundary(track, 0, 10);
+    expect(joined.segments).toHaveLength(1);
+    expect(joined.segments[0].points).toEqual([a, leftEnd, rightEnd]);
+    expect(track.segments[1].points[0]).toEqual(rightStart);
+  });
+
+  it('does not offer or allow a snap join beyond the explicit limit', () => {
+    const farStart = { lat: 60.0002, lon: 10 }; // about 22 m north
+    const track = makeTrack('far', [[a, b], [farStart, c]]);
+    expect(findSnapJoinCandidates(track, 10)).toHaveLength(0);
+    expect(() => snapJoinSegmentBoundary(track, 0, 10)).toThrow(/beyond the 10 m snap-join limit/i);
+  });
 });
 
 describe('editor history boundaries', () => {
@@ -128,6 +153,21 @@ describe('editor history boundaries', () => {
     store.undo();
     expect(store.get().tracks[0].segments).toHaveLength(1);
     expect(store.get().pieces).toHaveLength(1);
+  });
+
+  it('makes an explicit snap join undoable', () => {
+    const store = new Store();
+    const a = { lat: 60, lon: 10 };
+    const b = { lat: 60.001, lon: 10.001 };
+    const nearB = { lat: b.lat + 0.00004, lon: b.lon };
+    const c = { lat: 60.002, lon: 10.002 };
+    const track = makeTrack('snap-history', [[a, b], [nearB, c]]);
+    store.addTrack(track);
+    store.snapJoinSelectedTrackSegments(0, 10);
+    expect(store.get().tracks[0].segments).toHaveLength(1);
+    store.undo();
+    expect(store.get().tracks[0].segments).toHaveLength(2);
+    expect(store.get().tracks[0].segments[1].points[0]).toEqual(nearB);
   });
 });
 
