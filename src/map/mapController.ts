@@ -13,6 +13,7 @@ import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat } from 'ol/proj.js';
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style.js';
 import type { Coordinate } from 'ol/coordinate.js';
+import type { Extent } from 'ol/extent.js';
 import { apply } from 'ol-mapbox-style';
 import { flattenTrack, getPiecePoints, indicesShareSegment, type RoutePiece } from '../editor/model';
 import type { GpxPoint, GpxTrack } from '../gpx/types';
@@ -23,6 +24,15 @@ import { getRouteAppearancePreset, type RouteAppearancePreset } from './styles/p
 
 type SelectionHandle = 'start' | 'end';
 export type MapLayerId = 'base' | 'tracks' | 'combined' | 'selection';
+
+export interface ExportRouteStyle {
+  color: string;
+  width: number;
+  opacity: number;
+  halo: boolean;
+  haloColor: string;
+  haloWidth: number;
+}
 
 export class MapController {
   private map: Map;
@@ -37,6 +47,7 @@ export class MapController {
   private selectionChangeHandler?: (handle: SelectionHandle, index: number) => void;
   private trackSignature = '';
   private routeAppearance: RouteAppearancePreset = getRouteAppearancePreset('book-light');
+  private exportRouteStyle?: ExportRouteStyle;
   private baseProviderId = rasterProviders[0].id;
   private baseRequestToken = 0;
   private exportFrame: HTMLDivElement;
@@ -127,6 +138,25 @@ export class MapController {
 
   setLayerOpacity(layerId: MapLayerId, opacity: number): void {
     this.getLayer(layerId).setOpacity(Math.max(0, Math.min(1, opacity)));
+  }
+
+  getLayerOpacity(layerId: MapLayerId): number {
+    return this.getLayer(layerId).getOpacity();
+  }
+
+  setExportRouteStyle(style?: ExportRouteStyle): void {
+    this.exportRouteStyle = style;
+    this.restyleComposite();
+  }
+
+  getExportContentExtent(preferCombined = true): [number, number, number, number] | undefined {
+    const source = preferCombined && this.compositeLayer.getSource()?.getFeatures().length
+      ? this.compositeLayer.getSource()
+      : this.trackLayer.getSource();
+    if (!source || !source.getFeatures().length) return undefined;
+    const extent: Extent = source.getExtent();
+    if (!extent.every(Number.isFinite)) return undefined;
+    return [extent[0], extent[1], extent[2], extent[3]];
   }
 
   setExportFrameAspect(aspect?: number): void {
@@ -313,6 +343,18 @@ export class MapController {
     const source = this.compositeLayer.getSource();
     if (!source) return;
     for (const feature of source.getFeatures()) {
+      if (this.exportRouteStyle) {
+        const route = this.exportRouteStyle;
+        const styles: Style[] = [];
+        if (route.halo) {
+          styles.push(new Style({ stroke: new Stroke({ color: route.haloColor, width: route.haloWidth }) }));
+        }
+        styles.push(new Style({
+          stroke: new Stroke({ color: this.withOpacity(route.color, route.opacity), width: route.width }),
+        }));
+        feature.setStyle(styles);
+        continue;
+      }
       const selected = Boolean(feature.get('selectedPiece'));
       feature.setStyle(new Style({
         stroke: new Stroke({
@@ -366,10 +408,12 @@ export class MapController {
   }
 
   private withOpacity(hex: string, opacity: number): string {
+    if (hex.startsWith('rgba(') || hex.startsWith('rgb(')) return hex;
     const value = hex.replace('#', '');
-    const r = Number.parseInt(value.slice(0, 2), 16);
-    const g = Number.parseInt(value.slice(2, 4), 16);
-    const b = Number.parseInt(value.slice(4, 6), 16);
+    const normalized = value.length === 3 ? value.split('').map((c) => c + c).join('') : value;
+    const r = Number.parseInt(normalized.slice(0, 2), 16);
+    const g = Number.parseInt(normalized.slice(2, 4), 16);
+    const b = Number.parseInt(normalized.slice(4, 6), 16);
     return `rgba(${r},${g},${b},${opacity})`;
   }
 }
