@@ -27,6 +27,11 @@ export interface DerivedRoute {
   segments: GpxSegment[];
 }
 
+export interface SnapJoinCandidate {
+  boundaryIndex: number;
+  distanceMeters: number;
+}
+
 export function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
   return segments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) }));
 }
@@ -141,7 +146,7 @@ export function countJoinableSegmentBoundaries(track: GpxTrack): number {
 /** Join only adjacent working segments whose boundary coordinates are exactly identical. No gap threshold is used. */
 export function joinTouchingSegments(track: GpxTrack): GpxTrack {
   if (!countJoinableSegmentBoundaries(track)) {
-    throw new Error('No adjacent track segments share an exact endpoint, so there is nothing safe to join.');
+    throw new Error('No adjacent track segments share an exact endpoint, so there is nothing safe to auto-join.');
   }
   const joined: GpxSegment[] = [];
   for (const segment of track.segments) {
@@ -156,6 +161,47 @@ export function joinTouchingSegments(track: GpxTrack): GpxTrack {
     }
   }
   return { ...track, segments: joined };
+}
+
+/** Find non-identical adjacent segment endpoints close enough for an explicit user-approved snap join. */
+export function findSnapJoinCandidates(track: GpxTrack, maxDistanceMeters = 10): SnapJoinCandidate[] {
+  if (!Number.isFinite(maxDistanceMeters) || maxDistanceMeters <= 0) return [];
+  const candidates: SnapJoinCandidate[] = [];
+  for (let index = 0; index < track.segments.length - 1; index += 1) {
+    const left = track.segments[index].points.at(-1);
+    const right = track.segments[index + 1].points[0];
+    if (!left || !right || sameCoordinate(left, right)) continue;
+    const distanceMeters = haversineMeters(left, right);
+    if (distanceMeters <= maxDistanceMeters) candidates.push({ boundaryIndex: index, distanceMeters });
+  }
+  return candidates.sort((a, b) => a.distanceMeters - b.distanceMeters || a.boundaryIndex - b.boundaryIndex);
+}
+
+/**
+ * Explicitly reconcile one adjacent segment boundary by moving the right segment's first point
+ * onto the left segment's final point, then joining. No connector geometry is created.
+ */
+export function snapJoinSegmentBoundary(track: GpxTrack, boundaryIndex: number, maxDistanceMeters = 10): GpxTrack {
+  const index = Math.round(boundaryIndex);
+  if (index < 0 || index >= track.segments.length - 1) throw new Error('Snap-join boundary is invalid.');
+  const left = track.segments[index];
+  const right = track.segments[index + 1];
+  const leftEnd = left.points.at(-1);
+  const rightStart = right.points[0];
+  if (!leftEnd || !rightStart) throw new Error('Both adjacent segments need at least one point to join.');
+  const distanceMeters = haversineMeters(leftEnd, rightStart);
+  if (distanceMeters > maxDistanceMeters) {
+    throw new Error(`Segment endpoints are ${distanceMeters.toFixed(1)} m apart, beyond the ${maxDistanceMeters.toFixed(0)} m snap-join limit.`);
+  }
+  const merged: GpxSegment = {
+    points: [
+      ...left.points.map((point) => ({ ...point })),
+      ...right.points.slice(1).map((point) => ({ ...point })),
+    ],
+  };
+  const segments = cloneSegments(track.segments);
+  segments.splice(index, 2, merged);
+  return { ...track, segments };
 }
 
 export function createPiece(track: GpxTrack, startIndex: number, endIndex: number): RoutePiece {
