@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import {
   buildCompositeSegments,
@@ -10,6 +11,7 @@ import {
   snapJoinSegmentBoundary,
   splitTrackAtFlatIndex,
 } from '../src/editor/model';
+import { segmentsToCoordinateOnlyGpx } from '../src/gpx/serialize';
 import type { GpxPoint, GpxTrack } from '../src/gpx/types';
 import { getContinuousCombinedRoute } from '../src/project/geometry';
 import { parseProject, serializeProject, type ProjectMapState } from '../src/project/file';
@@ -20,7 +22,7 @@ function makeTrack(id: string, segments: GpxPoint[][]): GpxTrack {
   return {
     id,
     fileName: `${id}.gpx`,
-    originalXml: '<gpx/>',
+    originalXml: segmentsToCoordinateOnlyGpx(working),
     originalSegments: working.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) })),
     segments: working,
     importedAt: 0,
@@ -98,7 +100,7 @@ describe('explicit split and join editing', () => {
 
   it('offers nearby non-identical boundaries for explicit snap join and moves only the second endpoint', () => {
     const leftEnd = { lat: 60, lon: 10 };
-    const rightStart = { lat: 60.00004, lon: 10 }; // about 4.4 m north
+    const rightStart = { lat: 60.00004, lon: 10 };
     const rightEnd = { lat: 60.001, lon: 10.001 };
     const track = makeTrack('snap', [[a, leftEnd], [rightStart, rightEnd]]);
     const candidates = findSnapJoinCandidates(track, 10);
@@ -113,7 +115,7 @@ describe('explicit split and join editing', () => {
   });
 
   it('does not offer or allow a snap join beyond the explicit limit', () => {
-    const farStart = { lat: 60.0002, lon: 10 }; // about 22 m north
+    const farStart = { lat: 60.0002, lon: 10 };
     const track = makeTrack('far', [[a, b], [farStart, c]]);
     expect(findSnapJoinCandidates(track, 10)).toHaveLength(0);
     expect(() => snapJoinSegmentBoundary(track, 0, 10)).toThrow(/beyond the 10 m snap-join limit/i);
@@ -172,10 +174,12 @@ describe('editor history boundaries', () => {
 });
 
 describe('local project files', () => {
-  it('round-trips working geometry, route pieces and map settings', () => {
+  it('round-trips source GPX, working geometry, route pieces and map settings', () => {
     const a = { lat: 60, lon: 10 };
     const b = { lat: 60.001, lon: 10.001 };
-    const track = makeTrack('saved', [[a, b]]);
+    const c = { lat: 60.002, lon: 10.002 };
+    const track = makeTrack('saved', [[a, b, c]]);
+    track.segments = [{ points: [a, b] }];
     const piece = createPiece(track, 0, 1);
     const text = serializeProject({
       tracks: [track],
@@ -185,9 +189,35 @@ describe('local project files', () => {
       selectedPieceId: piece.id,
     }, mapState);
     const project = parseProject(text);
+    expect(project.version).toBe(2);
+    expect(project.state.tracks[0].originalXml).toBe(track.originalXml);
+    expect(project.state.tracks[0].originalSegments[0].points).toEqual([a, b, c]);
     expect(project.state.tracks[0].segments[0].points).toEqual([a, b]);
     expect(project.state.pieces[0].segmentIndex).toBe(0);
     expect(project.map).toEqual(mapState);
+  });
+
+  it('omits duplicate working GPX for an untouched track and writes minified JSON', () => {
+    const a = { lat: 60, lon: 10 };
+    const b = { lat: 60.001, lon: 10.001 };
+    const track = makeTrack('compact', [[a, b]]);
+    const text = serializeProject({ tracks: [track], pieces: [] }, mapState);
+    const raw = JSON.parse(text);
+    expect(raw.version).toBe(2);
+    expect(raw.tracks[0].originalXml).toContain('<gpx');
+    expect(raw.tracks[0].workingXml).toBeUndefined();
+    expect(text).not.toContain('\n  "');
+  });
+
+  it('stores edited working geometry as standard coordinate-only GPX', () => {
+    const a = { lat: 60, lon: 10 };
+    const b = { lat: 60.001, lon: 10.001 };
+    const c = { lat: 60.002, lon: 10.002 };
+    const track = makeTrack('edited', [[a, b, c]]);
+    track.segments = [{ points: [a, c] }];
+    const raw = JSON.parse(serializeProject({ tracks: [track], pieces: [] }, mapState));
+    expect(raw.tracks[0].workingXml).toContain('<gpx');
+    expect(raw.tracks[0].workingXml).toContain('<trkseg>');
   });
 
   it('rejects route pieces that reference missing source geometry', () => {
@@ -196,7 +226,7 @@ describe('local project files', () => {
     const track = makeTrack('saved', [[a, b]]);
     const piece = createPiece(track, 0, 1);
     const raw = JSON.parse(serializeProject({ tracks: [track], pieces: [piece] }, mapState));
-    raw.state.pieces[0].segmentIndex = 9;
+    raw.pieces[0].segmentIndex = 9;
     expect(() => parseProject(JSON.stringify(raw))).toThrow(/source track or segment is missing/i);
   });
 });
