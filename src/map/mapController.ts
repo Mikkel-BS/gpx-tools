@@ -13,7 +13,6 @@ import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat } from 'ol/proj.js';
 import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style.js';
 import type { Coordinate } from 'ol/coordinate.js';
-import type { Extent } from 'ol/extent.js';
 import { apply } from 'ol-mapbox-style';
 import { flattenTrack, getPiecePoints, indicesShareSegment, type RoutePiece } from '../editor/model';
 import type { GpxPoint, GpxTrack } from '../gpx/types';
@@ -154,8 +153,8 @@ export class MapController {
       ? this.compositeLayer.getSource()
       : this.trackLayer.getSource();
     if (!source || !source.getFeatures().length) return undefined;
-    const extent: Extent = source.getExtent();
-    if (!extent.every(Number.isFinite)) return undefined;
+    const extent = source.getExtent();
+    if (!extent || !extent.every(Number.isFinite)) return undefined;
     return [extent[0], extent[1], extent[2], extent[3]];
   }
 
