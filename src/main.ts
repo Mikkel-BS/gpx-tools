@@ -31,7 +31,7 @@ app.innerHTML = `
         <h2>Project</h2>
         <input id="projectInput" type="file" accept=".json,application/json" hidden>
         <div class="button-row"><button id="openProject" class="secondary">Open project</button><button id="saveProject" class="secondary">Save project</button></div>
-        <p class="hint">Project JSON stays local and restores tracks, working edits, combined route and map settings.</p>
+        <p class="hint">Project JSON stays local and restores source GPX, working edits, combined route, map settings and image composition.</p>
       </section>
       <section><h2>Tracks</h2><label class="import"><input id="fileInput" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" multiple><span>Import GPX files</span></label><p class="hint">Up to four files.</p><div id="trackList"></div></section>
       <section id="selectionSection">
@@ -84,7 +84,10 @@ app.innerHTML = `
   </main>`;
 
 const map = new MapController(document.querySelector<HTMLElement>('#map')!);
-initMapImageExportUi(document.querySelector<HTMLElement>('#imageExportRoot')!, { map });
+const imageExport = initMapImageExportUi(document.querySelector<HTMLElement>('#imageExportRoot')!, {
+  map,
+  getState: () => store.get(),
+});
 initNtr1Ui(document.querySelector<HTMLElement>('#ntr1Root')!, {
   getState: () => store.get(),
   addTrack: (track) => store.addTrack(track),
@@ -158,7 +161,7 @@ baseMapSelect.value = map.getBaseProviderId();
 
 openProjectBtn.addEventListener('click', () => projectInput.click());
 saveProjectBtn.addEventListener('click', () => {
-  downloadText('gpx-tools-project.json', serializeProject(store.get(), captureProjectMapState()));
+  downloadText('gpx-tools-project.json', serializeProject(store.get(), captureProjectMapState(), imageExport.getSettings()));
 });
 projectInput.addEventListener('change', async () => {
   const file = projectInput.files?.[0];
@@ -167,6 +170,7 @@ projectInput.addEventListener('change', async () => {
   try {
     const project = parseProject(await file.text());
     await applyProjectMapState(project.map);
+    imageExport.applySettings(project.image);
     store.replaceState(project.state);
   } catch (error) {
     alert(error instanceof Error ? error.message : String(error));
