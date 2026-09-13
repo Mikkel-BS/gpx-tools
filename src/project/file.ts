@@ -1,9 +1,12 @@
 import type { RoutePiece } from '../editor/model';
-import type { GpxPoint, GpxSegment, GpxTrack } from '../gpx/types';
+import { parseGpx } from '../gpx/parser';
+import { segmentsToCoordinateOnlyGpx } from '../gpx/serialize';
+import type { GpxSegment, GpxTrack } from '../gpx/types';
+import { defaultImageExportSettings, type ImageExportSettings } from '../export/settings';
 import type { AppState, TrackSelection } from '../state/store';
 
 export const PROJECT_FORMAT = 'gpx-tools-project';
-export const PROJECT_VERSION = 1;
+export const PROJECT_VERSION = 2;
 
 export interface ProjectLayerState {
   visible: boolean;
@@ -27,50 +30,102 @@ export interface ProjectDocument {
   savedAt: string;
   state: AppState;
   map: ProjectMapState;
+  image: ImageExportSettings;
 }
 
-function clonePoint(point: GpxPoint): GpxPoint {
-  return { lat: point.lat, lon: point.lon };
+interface ProjectTrackV2 {
+  id: string;
+  fileName: string;
+  importedAt: number;
+  /** Original imported GPX, preserved verbatim and kept as the canonical source representation. */
+  originalXml: string;
+  /** Present only when working geometry differs from the original. Standard coordinate-only GPX. */
+  workingXml?: string;
 }
 
-function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
-  return segments.map((segment) => ({ points: segment.points.map(clonePoint) }));
+interface ProjectWireV2 {
+  format: typeof PROJECT_FORMAT;
+  version: 2;
+  savedAt: string;
+  tracks: ProjectTrackV2[];
+  selectedTrackId?: string;
+  selection?: TrackSelection;
+  pieces: RoutePiece[];
+  selectedPieceId?: string;
+  map: ProjectMapState;
+  image: ImageExportSettings;
 }
 
-function cloneTrack(track: GpxTrack): GpxTrack {
-  return {
-    ...track,
-    originalSegments: cloneSegments(track.originalSegments),
-    segments: cloneSegments(track.segments),
-  };
-}
-
-function clonePiece(piece: RoutePiece): RoutePiece {
-  return { ...piece };
+function segmentsEqual(a: GpxSegment[], b: GpxSegment[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let segmentIndex = 0; segmentIndex < a.length; segmentIndex += 1) {
+    const left = a[segmentIndex].points;
+    const right = b[segmentIndex].points;
+    if (left.length !== right.length) return false;
+    for (let pointIndex = 0; pointIndex < left.length; pointIndex += 1) {
+      if (left[pointIndex].lat !== right[pointIndex].lat || left[pointIndex].lon !== right[pointIndex].lon) return false;
+    }
+  }
+  return true;
 }
 
 function cloneSelection(selection?: TrackSelection): TrackSelection | undefined {
   return selection ? { ...selection } : undefined;
 }
 
-export function createProjectDocument(state: AppState, map: ProjectMapState): ProjectDocument {
+function clonePiece(piece: RoutePiece): RoutePiece {
+  return { ...piece };
+}
+
+function toWireTrack(track: GpxTrack): ProjectTrackV2 {
+  const result: ProjectTrackV2 = {
+    id: track.id,
+    fileName: track.fileName,
+    importedAt: track.importedAt,
+    originalXml: track.originalXml,
+  };
+  if (!segmentsEqual(track.segments, track.originalSegments)) {
+    result.workingXml = segmentsToCoordinateOnlyGpx(track.segments);
+  }
+  return result;
+}
+
+export function createProjectDocument(state: AppState, map: ProjectMapState, image = defaultImageExportSettings()): ProjectDocument {
   return {
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
     savedAt: new Date().toISOString(),
     state: {
-      tracks: state.tracks.map(cloneTrack),
+      tracks: state.tracks.map((track) => ({
+        ...track,
+        originalSegments: track.originalSegments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) })),
+        segments: track.segments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) })),
+      })),
       selectedTrackId: state.selectedTrackId,
       selection: cloneSelection(state.selection),
       pieces: state.pieces.map(clonePiece),
       selectedPieceId: state.selectedPieceId,
     },
-    map: JSON.parse(JSON.stringify(map)) as ProjectMapState,
+    map: structuredClone(map),
+    image: structuredClone(image),
   };
 }
 
-export function serializeProject(state: AppState, map: ProjectMapState): string {
-  return `${JSON.stringify(createProjectDocument(state, map), null, 2)}\n`;
+/** Project files are intentionally minified; embedded original GPX remains standard, recognizable GPX text. */
+export function serializeProject(state: AppState, map: ProjectMapState, image = defaultImageExportSettings()): string {
+  const wire: ProjectWireV2 = {
+    format: PROJECT_FORMAT,
+    version: 2,
+    savedAt: new Date().toISOString(),
+    tracks: state.tracks.map(toWireTrack),
+    selectedTrackId: state.selectedTrackId,
+    selection: cloneSelection(state.selection),
+    pieces: state.pieces.map(clonePiece),
+    selectedPieceId: state.selectedPieceId,
+    map: structuredClone(map),
+    image: structuredClone(image),
+  };
+  return `${JSON.stringify(wire)}\n`;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -81,6 +136,10 @@ function record(value: unknown, label: string): Record<string, unknown> {
 function stringValue(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value) throw new Error(`${label} must be a non-empty string.`);
   return value;
+}
+
+function optionalString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
 }
 
 function finiteNumber(value: unknown, label: string): number {
@@ -94,57 +153,28 @@ function integer(value: unknown, label: string): number {
   return number;
 }
 
-function point(value: unknown, label: string): GpxPoint {
-  const item = record(value, label);
-  const lat = finiteNumber(item.lat, `${label}.lat`);
-  const lon = finiteNumber(item.lon, `${label}.lon`);
-  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) throw new Error(`${label} is outside valid latitude/longitude bounds.`);
-  return { lat, lon };
-}
-
-function segments(value: unknown, label: string): GpxSegment[] {
-  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
-  return value.map((segmentValue, segmentIndex) => {
-    const segment = record(segmentValue, `${label}[${segmentIndex}]`);
-    if (!Array.isArray(segment.points)) throw new Error(`${label}[${segmentIndex}].points must be an array.`);
-    return { points: segment.points.map((item, pointIndex) => point(item, `${label}[${segmentIndex}].points[${pointIndex}]`)) };
-  });
-}
-
-function track(value: unknown, index: number): GpxTrack {
-  const item = record(value, `state.tracks[${index}]`);
-  return {
-    id: stringValue(item.id, `state.tracks[${index}].id`),
-    fileName: stringValue(item.fileName, `state.tracks[${index}].fileName`),
-    originalXml: typeof item.originalXml === 'string' ? item.originalXml : '',
-    originalSegments: segments(item.originalSegments, `state.tracks[${index}].originalSegments`),
-    segments: segments(item.segments, `state.tracks[${index}].segments`),
-    importedAt: finiteNumber(item.importedAt, `state.tracks[${index}].importedAt`),
-  };
-}
-
 function piece(value: unknown, index: number): RoutePiece {
-  const item = record(value, `state.pieces[${index}]`);
-  if (typeof item.reversed !== 'boolean') throw new Error(`state.pieces[${index}].reversed must be boolean.`);
+  const item = record(value, `pieces[${index}]`);
+  if (typeof item.reversed !== 'boolean') throw new Error(`pieces[${index}].reversed must be boolean.`);
   return {
-    id: stringValue(item.id, `state.pieces[${index}].id`),
-    trackId: stringValue(item.trackId, `state.pieces[${index}].trackId`),
-    segmentIndex: integer(item.segmentIndex, `state.pieces[${index}].segmentIndex`),
-    startPointIndex: integer(item.startPointIndex, `state.pieces[${index}].startPointIndex`),
-    endPointIndex: integer(item.endPointIndex, `state.pieces[${index}].endPointIndex`),
-    startIndex: integer(item.startIndex, `state.pieces[${index}].startIndex`),
-    endIndex: integer(item.endIndex, `state.pieces[${index}].endIndex`),
+    id: stringValue(item.id, `pieces[${index}].id`),
+    trackId: stringValue(item.trackId, `pieces[${index}].trackId`),
+    segmentIndex: integer(item.segmentIndex, `pieces[${index}].segmentIndex`),
+    startPointIndex: integer(item.startPointIndex, `pieces[${index}].startPointIndex`),
+    endPointIndex: integer(item.endPointIndex, `pieces[${index}].endPointIndex`),
+    startIndex: integer(item.startIndex, `pieces[${index}].startIndex`),
+    endIndex: integer(item.endIndex, `pieces[${index}].endIndex`),
     reversed: item.reversed,
   };
 }
 
 function selection(value: unknown): TrackSelection | undefined {
   if (value === undefined || value === null) return undefined;
-  const item = record(value, 'state.selection');
+  const item = record(value, 'selection');
   return {
-    trackId: stringValue(item.trackId, 'state.selection.trackId'),
-    startIndex: integer(item.startIndex, 'state.selection.startIndex'),
-    endIndex: integer(item.endIndex, 'state.selection.endIndex'),
+    trackId: stringValue(item.trackId, 'selection.trackId'),
+    startIndex: integer(item.startIndex, 'selection.startIndex'),
+    endIndex: integer(item.endIndex, 'selection.endIndex'),
   };
 }
 
@@ -156,44 +186,10 @@ function layerState(value: unknown, label: string): ProjectLayerState {
   return { visible: item.visible, opacity };
 }
 
-export function parseProject(text: string): ProjectDocument {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('Project file is not valid JSON.');
-  }
-  const root = record(parsed, 'Project');
-  if (root.format !== PROJECT_FORMAT) throw new Error('This is not a GPX & Map Tool project file.');
-  if (root.version !== PROJECT_VERSION) throw new Error(`Unsupported project version: ${String(root.version)}.`);
-
-  const stateRaw = record(root.state, 'state');
-  if (!Array.isArray(stateRaw.tracks)) throw new Error('state.tracks must be an array.');
-  if (stateRaw.tracks.length > 4) throw new Error('Project contains more than four tracks.');
-  if (!Array.isArray(stateRaw.pieces)) throw new Error('state.pieces must be an array.');
-  const tracks = stateRaw.tracks.map(track);
-  const trackIds = new Set(tracks.map((item) => item.id));
-  if (trackIds.size !== tracks.length) throw new Error('Project contains duplicate track IDs.');
-  const pieces = stateRaw.pieces.map(piece);
-  for (const routePiece of pieces) {
-    const source = tracks.find((item) => item.id === routePiece.trackId);
-    const sourceSegment = source?.segments[routePiece.segmentIndex];
-    if (!source || !sourceSegment) throw new Error('Project contains a route piece whose source track or segment is missing.');
-    if (routePiece.startPointIndex < 0 || routePiece.endPointIndex < routePiece.startPointIndex || routePiece.endPointIndex >= sourceSegment.points.length) {
-      throw new Error('Project contains a route piece with invalid point indexes.');
-    }
-  }
-
-  const selectedTrackId = stateRaw.selectedTrackId === undefined ? undefined : stringValue(stateRaw.selectedTrackId, 'state.selectedTrackId');
-  if (selectedTrackId && !trackIds.has(selectedTrackId)) throw new Error('Selected track does not exist in this project.');
-  const parsedSelection = selection(stateRaw.selection);
-  if (parsedSelection && !trackIds.has(parsedSelection.trackId)) throw new Error('Selection references a missing track.');
-  const selectedPieceId = stateRaw.selectedPieceId === undefined ? undefined : stringValue(stateRaw.selectedPieceId, 'state.selectedPieceId');
-  if (selectedPieceId && !pieces.some((item) => item.id === selectedPieceId)) throw new Error('Selected route piece does not exist in this project.');
-
-  const mapRaw = record(root.map, 'map');
+function parseMap(value: unknown): ProjectMapState {
+  const mapRaw = record(value, 'map');
   const layersRaw = record(mapRaw.layers, 'map.layers');
-  const map: ProjectMapState = {
+  return {
     baseProviderId: stringValue(mapRaw.baseProviderId, 'map.baseProviderId'),
     routeAppearanceId: stringValue(mapRaw.routeAppearanceId, 'map.routeAppearanceId'),
     layers: {
@@ -203,12 +199,168 @@ export function parseProject(text: string): ProjectDocument {
       selection: layerState(layersRaw.selection, 'map.layers.selection'),
     },
   };
+}
 
+function bool(value: unknown, fallback: boolean): boolean { return typeof value === 'boolean' ? value : fallback; }
+function bounded(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+function parseImage(value: unknown): ImageExportSettings {
+  const defaults = defaultImageExportSettings();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
+  const item = value as Record<string, unknown>;
+  const fitMode = item.fitMode === 'current' || item.fitMode === 'route' ? item.fitMode : defaults.fitMode;
+  return {
+    presetId: optionalString(item.presetId, defaults.presetId),
+    layoutId: optionalString(item.layoutId, defaults.layoutId),
+    widthMm: bounded(item.widthMm, defaults.widthMm, 10, 1000),
+    heightMm: bounded(item.heightMm, defaults.heightMm, 10, 1000),
+    dpi: bounded(item.dpi, defaults.dpi, 72, 600),
+    includeBaseMap: bool(item.includeBaseMap, defaults.includeBaseMap),
+    includeTracks: bool(item.includeTracks, defaults.includeTracks),
+    includeCombinedRoute: bool(item.includeCombinedRoute, defaults.includeCombinedRoute),
+    showScaleBar: bool(item.showScaleBar, defaults.showScaleBar),
+    showNorthArrow: bool(item.showNorthArrow, defaults.showNorthArrow),
+    fitMode,
+    paddingPercent: bounded(item.paddingPercent, defaults.paddingPercent, 0, 35),
+    backgroundColor: optionalString(item.backgroundColor, defaults.backgroundColor),
+    border: bool(item.border, defaults.border),
+    routeColor: optionalString(item.routeColor, defaults.routeColor),
+    routeWidth: bounded(item.routeWidth, defaults.routeWidth, 1, 30),
+    routeOpacity: bounded(item.routeOpacity, defaults.routeOpacity, 0, 1),
+    routeHalo: bool(item.routeHalo, defaults.routeHalo),
+    routeHaloColor: optionalString(item.routeHaloColor, defaults.routeHaloColor),
+    routeHaloWidth: bounded(item.routeHaloWidth, defaults.routeHaloWidth, 1, 40),
+    title: optionalString(item.title),
+    subtitle: optionalString(item.subtitle),
+    caption: optionalString(item.caption),
+    showStartEndMarkers: bool(item.showStartEndMarkers, defaults.showStartEndMarkers),
+  };
+}
+
+function validateState(state: AppState): void {
+  if (state.tracks.length > 4) throw new Error('Project contains more than four tracks.');
+  const trackIds = new Set(state.tracks.map((track) => track.id));
+  if (trackIds.size !== state.tracks.length) throw new Error('Project contains duplicate track IDs.');
+  for (const routePiece of state.pieces) {
+    const source = state.tracks.find((item) => item.id === routePiece.trackId);
+    const sourceSegment = source?.segments[routePiece.segmentIndex];
+    if (!source || !sourceSegment) throw new Error('Project contains a route piece whose source track or segment is missing.');
+    if (routePiece.startPointIndex < 0 || routePiece.endPointIndex < routePiece.startPointIndex || routePiece.endPointIndex >= sourceSegment.points.length) {
+      throw new Error('Project contains a route piece with invalid point indexes.');
+    }
+  }
+  if (state.selectedTrackId && !trackIds.has(state.selectedTrackId)) throw new Error('Selected track does not exist in this project.');
+  if (state.selection && !trackIds.has(state.selection.trackId)) throw new Error('Selection references a missing track.');
+  if (state.selectedPieceId && !state.pieces.some((item) => item.id === state.selectedPieceId)) throw new Error('Selected route piece does not exist in this project.');
+}
+
+function parseV2(root: Record<string, unknown>): ProjectDocument {
+  if (!Array.isArray(root.tracks)) throw new Error('tracks must be an array.');
+  const tracks: GpxTrack[] = root.tracks.map((value, index) => {
+    const item = record(value, `tracks[${index}]`);
+    const id = stringValue(item.id, `tracks[${index}].id`);
+    const fileName = stringValue(item.fileName, `tracks[${index}].fileName`);
+    const importedAt = finiteNumber(item.importedAt, `tracks[${index}].importedAt`);
+    const originalXml = stringValue(item.originalXml, `tracks[${index}].originalXml`);
+    const originalParsed = parseGpx(originalXml, fileName);
+    let segments = originalParsed.segments;
+    if (item.workingXml !== undefined) {
+      const workingXml = stringValue(item.workingXml, `tracks[${index}].workingXml`);
+      segments = parseGpx(workingXml, fileName).segments;
+    }
+    return {
+      id,
+      fileName,
+      importedAt,
+      originalXml,
+      originalSegments: originalParsed.originalSegments,
+      segments,
+    };
+  });
+  const pieces = Array.isArray(root.pieces) ? root.pieces.map(piece) : (() => { throw new Error('pieces must be an array.'); })();
+  const state: AppState = {
+    tracks,
+    selectedTrackId: root.selectedTrackId === undefined ? undefined : stringValue(root.selectedTrackId, 'selectedTrackId'),
+    selection: selection(root.selection),
+    pieces,
+    selectedPieceId: root.selectedPieceId === undefined ? undefined : stringValue(root.selectedPieceId, 'selectedPieceId'),
+  };
+  validateState(state);
   return {
     format: PROJECT_FORMAT,
     version: PROJECT_VERSION,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : '',
-    state: { tracks, selectedTrackId, selection: parsedSelection, pieces, selectedPieceId },
-    map,
+    state,
+    map: parseMap(root.map),
+    image: parseImage(root.image),
   };
+}
+
+/** Backward-compatible loader for v1 project files. New saves always use v2. */
+function parseV1(root: Record<string, unknown>): ProjectDocument {
+  const stateRaw = record(root.state, 'state');
+  if (!Array.isArray(stateRaw.tracks)) throw new Error('state.tracks must be an array.');
+  const tracks: GpxTrack[] = stateRaw.tracks.map((value, index) => {
+    const item = record(value, `state.tracks[${index}]`);
+    const fileName = stringValue(item.fileName, `state.tracks[${index}].fileName`);
+    const originalXml = typeof item.originalXml === 'string' && item.originalXml ? item.originalXml : undefined;
+    if (!originalXml) throw new Error('Legacy project track is missing its original GPX XML.');
+    const originalParsed = parseGpx(originalXml, fileName);
+    const legacySegments = item.segments;
+    let workingSegments = originalParsed.segments;
+    if (Array.isArray(legacySegments)) {
+      const coordinateXml = segmentsToCoordinateOnlyGpx(legacySegments.map((segmentValue, segmentIndex) => {
+        const segment = record(segmentValue, `state.tracks[${index}].segments[${segmentIndex}]`);
+        if (!Array.isArray(segment.points)) throw new Error('Legacy project segment points are invalid.');
+        return { points: segment.points.map((pointValue, pointIndex) => {
+          const p = record(pointValue, `point ${pointIndex}`);
+          const lat = finiteNumber(p.lat, 'lat');
+          const lon = finiteNumber(p.lon, 'lon');
+          return { lat, lon };
+        }) };
+      }));
+      workingSegments = parseGpx(coordinateXml, fileName).segments;
+    }
+    return {
+      id: stringValue(item.id, `state.tracks[${index}].id`),
+      fileName,
+      importedAt: finiteNumber(item.importedAt, `state.tracks[${index}].importedAt`),
+      originalXml,
+      originalSegments: originalParsed.originalSegments,
+      segments: workingSegments,
+    };
+  });
+  const pieces = Array.isArray(stateRaw.pieces) ? stateRaw.pieces.map(piece) : [];
+  const state: AppState = {
+    tracks,
+    selectedTrackId: stateRaw.selectedTrackId === undefined ? undefined : stringValue(stateRaw.selectedTrackId, 'state.selectedTrackId'),
+    selection: selection(stateRaw.selection),
+    pieces,
+    selectedPieceId: stateRaw.selectedPieceId === undefined ? undefined : stringValue(stateRaw.selectedPieceId, 'state.selectedPieceId'),
+  };
+  validateState(state);
+  return {
+    format: PROJECT_FORMAT,
+    version: PROJECT_VERSION,
+    savedAt: typeof root.savedAt === 'string' ? root.savedAt : '',
+    state,
+    map: parseMap(root.map),
+    image: defaultImageExportSettings(),
+  };
+}
+
+export function parseProject(text: string): ProjectDocument {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Project file is not valid JSON.');
+  }
+  const root = record(parsed, 'Project');
+  if (root.format !== PROJECT_FORMAT) throw new Error('This is not a GPX & Map Tool project file.');
+  if (root.version === 2) return parseV2(root);
+  if (root.version === 1) return parseV1(root);
+  throw new Error(`Unsupported project version: ${String(root.version)}.`);
 }
