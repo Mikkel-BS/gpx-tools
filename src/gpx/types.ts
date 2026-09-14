@@ -1,6 +1,8 @@
 export interface GpxPoint {
   lat: number;
   lon: number;
+  /** Elevation in meters from GPX <ele>, when present. */
+  ele?: number;
 }
 
 export interface GpxSegment {
