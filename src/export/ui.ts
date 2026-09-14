@@ -9,8 +9,11 @@ import { renderMapImage } from './mapRenderer';
 import {
   applyImageStylePreset,
   defaultImageExportSettings,
+  groundCoverageMeters,
   imageStylePresets,
+  mapScalePresets,
   type ImageExportSettings,
+  type ImageExtentMode,
 } from './settings';
 
 export interface MapImageExportUiOptions {
@@ -23,9 +26,14 @@ export interface MapImageExportUiHandle {
   applySettings(settings: ImageExportSettings): void;
 }
 
+function formatGroundDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(meters >= 10_000 ? 1 : 2)} km` : `${Math.round(meters)} m`;
+}
+
 export function initMapImageExportUi(root: HTMLElement, options: MapImageExportUiOptions): MapImageExportUiHandle {
   const layoutOptions = imageLayoutPresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
   const styleOptions = imageStylePresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
+  const scaleOptions = mapScalePresets.map((preset) => `<option value="${preset.denominator}">${preset.label}</option>`).join('');
   let settings = defaultImageExportSettings();
 
   root.innerHTML = `
@@ -56,7 +64,15 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
                   <label><input type="checkbox" data-image-combined> Combined route</label>
                   <label><input type="checkbox" data-image-markers> Start/end markers</label>
                 </div>
-                <label class="field-label">Fit<select data-image-fit><option value="route">Fit route automatically</option><option value="current">Use current export frame</option></select></label>
+                <label class="field-label">Extent<select data-image-fit>
+                  <option value="route">Fit route automatically</option>
+                  <option value="current">Use current export frame</option>
+                  <option value="scale">Lock print scale</option>
+                  <option value="zoom">Lock web zoom</option>
+                </select></label>
+                <label class="field-label" data-image-scale-row>Map scale<select data-image-map-scale>${scaleOptions}</select></label>
+                <label class="field-label" data-image-zoom-row>Web zoom<input data-image-zoom type="number" min="0" max="24" step="0.25"></label>
+                <p class="hint" data-image-extent-info></p>
                 <label class="field-label">Route padding <span data-image-padding-label></span><input data-image-padding type="range" min="0" max="35" step="1"></label>
                 <div class="image-style-grid">
                   <label>Route color<input data-image-route-color type="color"></label>
@@ -113,6 +129,11 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
   const combinedCheck = root.querySelector<HTMLInputElement>('[data-image-combined]')!;
   const markerCheck = root.querySelector<HTMLInputElement>('[data-image-markers]')!;
   const fitSelect = root.querySelector<HTMLSelectElement>('[data-image-fit]')!;
+  const mapScaleSelect = root.querySelector<HTMLSelectElement>('[data-image-map-scale]')!;
+  const zoomInput = root.querySelector<HTMLInputElement>('[data-image-zoom]')!;
+  const scaleRow = root.querySelector<HTMLElement>('[data-image-scale-row]')!;
+  const zoomRow = root.querySelector<HTMLElement>('[data-image-zoom-row]')!;
+  const extentInfo = root.querySelector<HTMLElement>('[data-image-extent-info]')!;
   const paddingInput = root.querySelector<HTMLInputElement>('[data-image-padding]')!;
   const paddingLabel = root.querySelector<HTMLElement>('[data-image-padding-label]')!;
   const routeColor = root.querySelector<HTMLInputElement>('[data-image-route-color]')!;
@@ -147,7 +168,9 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     includeCombinedRoute: combinedCheck.checked,
     showScaleBar: scaleCheck.checked,
     showNorthArrow: northCheck.checked,
-    fitMode: fitSelect.value === 'current' ? 'current' : 'route',
+    fitMode: fitSelect.value as ImageExtentMode,
+    scaleDenominator: Number(mapScaleSelect.value),
+    zoomLevel: Number(zoomInput.value),
     paddingPercent: Number(paddingInput.value),
     backgroundColor: backgroundColor.value,
     border: borderCheck.checked,
@@ -174,6 +197,12 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     combinedCheck.checked = settings.includeCombinedRoute;
     markerCheck.checked = settings.showStartEndMarkers;
     fitSelect.value = settings.fitMode;
+    mapScaleSelect.value = String(settings.scaleDenominator);
+    if (!Array.from(mapScaleSelect.options).some((option) => Number(option.value) === settings.scaleDenominator)) {
+      mapScaleSelect.insertAdjacentHTML('beforeend', `<option value="${settings.scaleDenominator}">1:${settings.scaleDenominator.toLocaleString()} · custom</option>`);
+      mapScaleSelect.value = String(settings.scaleDenominator);
+    }
+    zoomInput.value = String(settings.zoomLevel);
     paddingInput.value = String(settings.paddingPercent);
     routeColor.value = settings.routeColor;
     routeWidth.value = String(settings.routeWidth);
@@ -195,6 +224,8 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     paddingLabel.textContent = `${settings.paddingPercent}%`;
     root.querySelector<HTMLElement>('[data-image-halo-controls]')!.hidden = !settings.routeHalo;
     paddingInput.disabled = settings.fitMode !== 'route';
+    scaleRow.hidden = settings.fitMode !== 'scale';
+    zoomRow.hidden = settings.fitMode !== 'zoom';
     routeColor.disabled = !settings.includeCombinedRoute;
     routeWidth.disabled = !settings.includeCombinedRoute;
     routeOpacity.disabled = !settings.includeCombinedRoute;
@@ -203,7 +234,20 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
 
     try {
       const dimensions = makeImageDimensions(settings.widthMm, settings.heightMm, settings.dpi);
-      dimensionsText.textContent = `${dimensions.widthPx.toLocaleString()} × ${dimensions.heightPx.toLocaleString()} px · ${(dimensions.widthPx * dimensions.heightPx / 1_000_000).toFixed(1)} MP`;
+      let extentDescription = '';
+      if (settings.fitMode === 'scale') {
+        const ground = groundCoverageMeters(settings.widthMm, settings.heightMm, settings.scaleDenominator);
+        extentDescription = ` · 1:${settings.scaleDenominator.toLocaleString()} covers ${formatGroundDistance(ground.width)} × ${formatGroundDistance(ground.height)}`;
+        extentInfo.textContent = 'Locked print scale uses the current map center. Pan the map to reposition the export.';
+      } else if (settings.fitMode === 'zoom') {
+        extentDescription = ` · web zoom ${settings.zoomLevel}`;
+        extentInfo.textContent = 'Locked web zoom reproduces the OpenLayers zoom level at the current map center; print scale still varies with latitude and DPI.';
+      } else if (settings.fitMode === 'route') {
+        extentInfo.textContent = 'The exporter fits the route and applies the selected padding.';
+      } else {
+        extentInfo.textContent = 'The current export frame determines the geographic extent.';
+      }
+      dimensionsText.textContent = `${dimensions.widthPx.toLocaleString()} × ${dimensions.heightPx.toLocaleString()} px · ${(dimensions.widthPx * dimensions.heightPx / 1_000_000).toFixed(1)} MP${extentDescription}`;
       options.map.setExportFrameAspect(dimensions.aspect);
     } catch (error) {
       dimensionsText.textContent = error instanceof Error ? error.message : String(error);
@@ -258,8 +302,8 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
   dpiSelect.addEventListener('change', updateUi);
 
   [baseCheck, tracksCheck, combinedCheck, markerCheck, haloCheck, borderCheck, scaleCheck, northCheck].forEach((input) => input.addEventListener('change', updateUi));
-  [fitSelect].forEach((input) => input.addEventListener('change', updateUi));
-  [paddingInput, routeWidth, routeOpacity, haloWidth].forEach((input) => input.addEventListener('input', updateUi));
+  [fitSelect, mapScaleSelect].forEach((input) => input.addEventListener('change', updateUi));
+  [paddingInput, routeWidth, routeOpacity, haloWidth, zoomInput].forEach((input) => input.addEventListener('input', updateUi));
   [routeColor, backgroundColor, haloColor].forEach((input) => input.addEventListener('input', markCustomStyle));
   [titleInput, subtitleInput, captionInput].forEach((input) => input.addEventListener('input', updateUi));
 
@@ -308,6 +352,11 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
       preview.replaceChildren(displayCanvas);
       placeholder.hidden = true;
       downloadButton.disabled = false;
+      if (settings.fitMode === 'zoom') {
+        extentInfo.textContent = `Rendered at web zoom ${result.zoomLevel.toFixed(2)} · effective print scale about 1:${Math.round(result.scaleDenominator).toLocaleString()} at the map center.`;
+      } else if (settings.fitMode === 'scale') {
+        extentInfo.textContent = `Rendered at print scale 1:${Math.round(result.scaleDenominator).toLocaleString()} · web zoom ${result.zoomLevel.toFixed(2)} at the map center.`;
+      }
     } catch (error) {
       alert(error instanceof Error ? error.message : String(error));
     } finally {
