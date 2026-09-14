@@ -1,3 +1,5 @@
+export type ImageExtentMode = 'current' | 'route' | 'scale' | 'zoom';
+
 export interface ImageExportSettings {
   presetId: string;
   layoutId: string;
@@ -9,7 +11,9 @@ export interface ImageExportSettings {
   includeCombinedRoute: boolean;
   showScaleBar: boolean;
   showNorthArrow: boolean;
-  fitMode: 'current' | 'route';
+  fitMode: ImageExtentMode;
+  scaleDenominator: number;
+  zoomLevel: number;
   paddingPercent: number;
   backgroundColor: string;
   border: boolean;
@@ -41,6 +45,27 @@ export interface ImageStylePreset {
     | 'showNorthArrow'
     | 'showStartEndMarkers'
   >;
+}
+
+export interface MapScalePreset {
+  denominator: number;
+  label: string;
+}
+
+/** Practical print-map scales for local, outdoor and regional maps in Norway. */
+export const mapScalePresets: MapScalePreset[] = [
+  { denominator: 10_000, label: '1:10 000 · local / urban detail' },
+  { denominator: 25_000, label: '1:25 000 · detailed outdoor' },
+  { denominator: 50_000, label: '1:50 000 · topographic / hiking' },
+  { denominator: 100_000, label: '1:100 000 · regional' },
+  { denominator: 250_000, label: '1:250 000 · broad overview' },
+];
+
+export function groundCoverageMeters(widthMm: number, heightMm: number, scaleDenominator: number): { width: number; height: number } {
+  return {
+    width: widthMm / 1000 * scaleDenominator,
+    height: heightMm / 1000 * scaleDenominator,
+  };
 }
 
 export const imageStylePresets: ImageStylePreset[] = [
@@ -99,6 +124,8 @@ export function defaultImageExportSettings(): ImageExportSettings {
     showScaleBar: true,
     showNorthArrow: false,
     fitMode: 'route',
+    scaleDenominator: 50_000,
+    zoomLevel: 13,
     paddingPercent: 8,
     backgroundColor: '#ffffff',
     border: false,
