@@ -1,8 +1,9 @@
 import './styles.css';
-import { flattenTrack, getPiecePoints } from '../editor/model';
+import { buildCompositeSegments, flattenTrack, getPiecePoints } from '../editor/model';
 import type { MapController } from '../map/mapController';
 import { getBaseMapDefinition } from '../map/sources/baseMaps';
 import type { AppState } from '../state/store';
+import { buildElevationProfile } from './elevationProfile';
 import { downloadBlob, canvasToPngBlob } from './image';
 import { getImageLayoutPreset, imageLayoutPresets, makeImageDimensions } from './layout';
 import { renderMapImage } from './mapRenderer';
@@ -14,6 +15,9 @@ import {
   mapScalePresets,
   type ImageExportSettings,
   type ImageExtentMode,
+  type ImageOutputMode,
+  type ProfileAxisMode,
+  type ProfileElevationRangeMode,
 } from './settings';
 
 export interface MapImageExportUiOptions {
@@ -30,6 +34,12 @@ function formatGroundDistance(meters: number): string {
   return meters >= 1000 ? `${(meters / 1000).toFixed(meters >= 10_000 ? 1 : 2)} km` : `${Math.round(meters)} m`;
 }
 
+function profileSegmentsForState(state: AppState) {
+  if (state.pieces.length) return buildCompositeSegments(state.pieces, state.tracks);
+  const selected = state.tracks.find((track) => track.id === state.selectedTrackId);
+  return selected?.segments ?? [];
+}
+
 export function initMapImageExportUi(root: HTMLElement, options: MapImageExportUiOptions): MapImageExportUiHandle {
   const layoutOptions = imageLayoutPresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
   const styleOptions = imageStylePresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join('');
@@ -38,7 +48,7 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
 
   root.innerHTML = `
     <h2>Map image</h2>
-    <p class="hint">Create a publication-oriented PNG with project-specific composition settings.</p>
+    <p class="hint">Create publication PNGs with reusable styling, reproducible map scale and optional elevation profile.</p>
     <button class="secondary" data-image-export-open>Export map image</button>
     <dialog class="image-export-dialog">
       <form method="dialog" class="image-export-shell">
@@ -48,6 +58,11 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
             <label class="field-label">Publication style<select data-image-style>${styleOptions}</select></label>
             <p class="hint">Presets copy a reusable house style into this project. You can then change any setting independently.</p>
 
+            <label class="field-label">Output<select data-image-output>
+              <option value="map">Map only</option>
+              <option value="map-profile">Map + elevation profile</option>
+              <option value="profile">Elevation profile only</option>
+            </select></label>
             <label class="field-label">Layout<select data-image-layout>${layoutOptions}<option value="custom">Custom</option></select></label>
             <div class="range-grid image-size-grid">
               <label>Width mm<input data-image-width type="number" min="10" max="1000" step="1"></label>
@@ -55,7 +70,7 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
             </div>
             <label class="field-label">Resolution<select data-image-dpi><option value="150">150 dpi</option><option value="300">300 dpi</option><option value="450">450 dpi</option><option value="600">600 dpi</option></select></label>
 
-            <details class="image-export-section" open>
+            <details class="image-export-section" open data-image-map-section>
               <summary>Map & route</summary>
               <div class="image-export-section-body">
                 <div class="image-export-checks">
@@ -91,6 +106,25 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
               </div>
             </details>
 
+            <details class="image-export-section" open data-image-profile-section>
+              <summary>Elevation profile</summary>
+              <div class="image-export-section-body">
+                <label class="field-label" data-profile-height-row>Profile panel height <span data-profile-height-label></span><input data-profile-height type="range" min="20" max="60" step="1"></label>
+                <div class="image-style-grid">
+                  <label>Distance axis<select data-profile-distance-mode><option value="fit">Fit route</option><option value="scale">Lock scale</option></select></label>
+                  <label data-profile-distance-scale-row>Meters / cm<input data-profile-distance-scale type="number" min="50" max="100000" step="50"></label>
+                  <label>Elevation axis<select data-profile-elevation-mode><option value="fit">Fit elevations</option><option value="scale">Lock scale</option></select></label>
+                  <label data-profile-elevation-scale-row>Meters / cm<input data-profile-elevation-scale type="number" min="10" max="10000" step="10"></label>
+                </div>
+                <label class="field-label">Elevation range<select data-profile-range-mode><option value="auto">Automatic baseline/range</option><option value="fixed">Fixed range for comparison</option></select></label>
+                <div class="range-grid" data-profile-fixed-range>
+                  <label>Minimum m<input data-profile-min type="number" min="-1000" max="10000" step="10"></label>
+                  <label>Maximum m<input data-profile-max type="number" min="-1000" max="10000" step="10"></label>
+                </div>
+                <p class="hint" data-profile-info></p>
+              </div>
+            </details>
+
             <details class="image-export-section">
               <summary>Text & decorations</summary>
               <div class="image-export-section-body">
@@ -117,44 +151,62 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
       </form>
     </dialog>`;
 
-  const dialog = root.querySelector<HTMLDialogElement>('dialog')!;
-  const openButton = root.querySelector<HTMLButtonElement>('[data-image-export-open]')!;
-  const styleSelect = root.querySelector<HTMLSelectElement>('[data-image-style]')!;
-  const layoutSelect = root.querySelector<HTMLSelectElement>('[data-image-layout]')!;
-  const widthInput = root.querySelector<HTMLInputElement>('[data-image-width]')!;
-  const heightInput = root.querySelector<HTMLInputElement>('[data-image-height]')!;
-  const dpiSelect = root.querySelector<HTMLSelectElement>('[data-image-dpi]')!;
-  const baseCheck = root.querySelector<HTMLInputElement>('[data-image-base]')!;
-  const tracksCheck = root.querySelector<HTMLInputElement>('[data-image-tracks]')!;
-  const combinedCheck = root.querySelector<HTMLInputElement>('[data-image-combined]')!;
-  const markerCheck = root.querySelector<HTMLInputElement>('[data-image-markers]')!;
-  const fitSelect = root.querySelector<HTMLSelectElement>('[data-image-fit]')!;
-  const mapScaleSelect = root.querySelector<HTMLSelectElement>('[data-image-map-scale]')!;
-  const zoomInput = root.querySelector<HTMLInputElement>('[data-image-zoom]')!;
-  const scaleRow = root.querySelector<HTMLElement>('[data-image-scale-row]')!;
-  const zoomRow = root.querySelector<HTMLElement>('[data-image-zoom-row]')!;
-  const extentInfo = root.querySelector<HTMLElement>('[data-image-extent-info]')!;
-  const paddingInput = root.querySelector<HTMLInputElement>('[data-image-padding]')!;
-  const paddingLabel = root.querySelector<HTMLElement>('[data-image-padding-label]')!;
-  const routeColor = root.querySelector<HTMLInputElement>('[data-image-route-color]')!;
-  const routeWidth = root.querySelector<HTMLInputElement>('[data-image-route-width]')!;
-  const routeOpacity = root.querySelector<HTMLInputElement>('[data-image-route-opacity]')!;
-  const backgroundColor = root.querySelector<HTMLInputElement>('[data-image-background]')!;
-  const haloCheck = root.querySelector<HTMLInputElement>('[data-image-halo]')!;
-  const haloColor = root.querySelector<HTMLInputElement>('[data-image-halo-color]')!;
-  const haloWidth = root.querySelector<HTMLInputElement>('[data-image-halo-width]')!;
-  const borderCheck = root.querySelector<HTMLInputElement>('[data-image-border]')!;
-  const titleInput = root.querySelector<HTMLInputElement>('[data-image-title]')!;
-  const subtitleInput = root.querySelector<HTMLInputElement>('[data-image-subtitle]')!;
-  const captionInput = root.querySelector<HTMLInputElement>('[data-image-caption]')!;
-  const scaleCheck = root.querySelector<HTMLInputElement>('[data-image-scale]')!;
-  const northCheck = root.querySelector<HTMLInputElement>('[data-image-north]')!;
-  const licenseCard = root.querySelector<HTMLDivElement>('[data-image-license]')!;
-  const dimensionsText = root.querySelector<HTMLParagraphElement>('[data-image-dimensions]')!;
-  const renderButton = root.querySelector<HTMLButtonElement>('[data-image-render]')!;
-  const downloadButton = root.querySelector<HTMLButtonElement>('[data-image-download]')!;
-  const preview = root.querySelector<HTMLDivElement>('[data-image-preview]')!;
-  const placeholder = root.querySelector<HTMLDivElement>('[data-image-placeholder]')!;
+  const q = <T extends Element>(selector: string) => root.querySelector<T>(selector)!;
+  const dialog = q<HTMLDialogElement>('dialog');
+  const openButton = q<HTMLButtonElement>('[data-image-export-open]');
+  const styleSelect = q<HTMLSelectElement>('[data-image-style]');
+  const outputSelect = q<HTMLSelectElement>('[data-image-output]');
+  const layoutSelect = q<HTMLSelectElement>('[data-image-layout]');
+  const widthInput = q<HTMLInputElement>('[data-image-width]');
+  const heightInput = q<HTMLInputElement>('[data-image-height]');
+  const dpiSelect = q<HTMLSelectElement>('[data-image-dpi]');
+  const baseCheck = q<HTMLInputElement>('[data-image-base]');
+  const tracksCheck = q<HTMLInputElement>('[data-image-tracks]');
+  const combinedCheck = q<HTMLInputElement>('[data-image-combined]');
+  const markerCheck = q<HTMLInputElement>('[data-image-markers]');
+  const fitSelect = q<HTMLSelectElement>('[data-image-fit]');
+  const mapScaleSelect = q<HTMLSelectElement>('[data-image-map-scale]');
+  const zoomInput = q<HTMLInputElement>('[data-image-zoom]');
+  const scaleRow = q<HTMLElement>('[data-image-scale-row]');
+  const zoomRow = q<HTMLElement>('[data-image-zoom-row]');
+  const extentInfo = q<HTMLElement>('[data-image-extent-info]');
+  const paddingInput = q<HTMLInputElement>('[data-image-padding]');
+  const paddingLabel = q<HTMLElement>('[data-image-padding-label]');
+  const routeColor = q<HTMLInputElement>('[data-image-route-color]');
+  const routeWidth = q<HTMLInputElement>('[data-image-route-width]');
+  const routeOpacity = q<HTMLInputElement>('[data-image-route-opacity]');
+  const backgroundColor = q<HTMLInputElement>('[data-image-background]');
+  const haloCheck = q<HTMLInputElement>('[data-image-halo]');
+  const haloColor = q<HTMLInputElement>('[data-image-halo-color]');
+  const haloWidth = q<HTMLInputElement>('[data-image-halo-width]');
+  const borderCheck = q<HTMLInputElement>('[data-image-border]');
+  const titleInput = q<HTMLInputElement>('[data-image-title]');
+  const subtitleInput = q<HTMLInputElement>('[data-image-subtitle]');
+  const captionInput = q<HTMLInputElement>('[data-image-caption]');
+  const scaleCheck = q<HTMLInputElement>('[data-image-scale]');
+  const northCheck = q<HTMLInputElement>('[data-image-north]');
+  const mapSection = q<HTMLElement>('[data-image-map-section]');
+  const profileSection = q<HTMLElement>('[data-image-profile-section]');
+  const profileHeightRow = q<HTMLElement>('[data-profile-height-row]');
+  const profileHeight = q<HTMLInputElement>('[data-profile-height]');
+  const profileHeightLabel = q<HTMLElement>('[data-profile-height-label]');
+  const profileDistanceMode = q<HTMLSelectElement>('[data-profile-distance-mode]');
+  const profileDistanceScaleRow = q<HTMLElement>('[data-profile-distance-scale-row]');
+  const profileDistanceScale = q<HTMLInputElement>('[data-profile-distance-scale]');
+  const profileElevationMode = q<HTMLSelectElement>('[data-profile-elevation-mode]');
+  const profileElevationScaleRow = q<HTMLElement>('[data-profile-elevation-scale-row]');
+  const profileElevationScale = q<HTMLInputElement>('[data-profile-elevation-scale]');
+  const profileRangeMode = q<HTMLSelectElement>('[data-profile-range-mode]');
+  const profileFixedRange = q<HTMLElement>('[data-profile-fixed-range]');
+  const profileMin = q<HTMLInputElement>('[data-profile-min]');
+  const profileMax = q<HTMLInputElement>('[data-profile-max]');
+  const profileInfo = q<HTMLElement>('[data-profile-info]');
+  const licenseCard = q<HTMLDivElement>('[data-image-license]');
+  const dimensionsText = q<HTMLParagraphElement>('[data-image-dimensions]');
+  const renderButton = q<HTMLButtonElement>('[data-image-render]');
+  const downloadButton = q<HTMLButtonElement>('[data-image-download]');
+  const preview = q<HTMLDivElement>('[data-image-preview]');
+  const placeholder = q<HTMLDivElement>('[data-image-placeholder]');
   let currentBlob: Blob | undefined;
 
   const capture = (): ImageExportSettings => ({
@@ -163,6 +215,7 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     widthMm: Number(widthInput.value),
     heightMm: Number(heightInput.value),
     dpi: Number(dpiSelect.value),
+    outputMode: outputSelect.value as ImageOutputMode,
     includeBaseMap: baseCheck.checked,
     includeTracks: tracksCheck.checked,
     includeCombinedRoute: combinedCheck.checked,
@@ -184,10 +237,19 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     subtitle: subtitleInput.value,
     caption: captionInput.value,
     showStartEndMarkers: markerCheck.checked,
+    profileHeightPercent: Number(profileHeight.value),
+    profileDistanceMode: profileDistanceMode.value as ProfileAxisMode,
+    profileDistanceMetersPerCm: Number(profileDistanceScale.value),
+    profileElevationMode: profileElevationMode.value as ProfileAxisMode,
+    profileElevationMetersPerCm: Number(profileElevationScale.value),
+    profileElevationRangeMode: profileRangeMode.value as ProfileElevationRangeMode,
+    profileElevationMin: Number(profileMin.value),
+    profileElevationMax: Number(profileMax.value),
   });
 
   const syncControls = () => {
     styleSelect.value = imageStylePresets.some((item) => item.id === settings.presetId) ? settings.presetId : imageStylePresets[0].id;
+    outputSelect.value = settings.outputMode;
     layoutSelect.value = imageLayoutPresets.some((item) => item.id === settings.layoutId) ? settings.layoutId : 'custom';
     widthInput.value = String(settings.widthMm);
     heightInput.value = String(settings.heightMm);
@@ -217,61 +279,99 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     captionInput.value = settings.caption;
     scaleCheck.checked = settings.showScaleBar;
     northCheck.checked = settings.showNorthArrow;
+    profileHeight.value = String(settings.profileHeightPercent);
+    profileDistanceMode.value = settings.profileDistanceMode;
+    profileDistanceScale.value = String(settings.profileDistanceMetersPerCm);
+    profileElevationMode.value = settings.profileElevationMode;
+    profileElevationScale.value = String(settings.profileElevationMetersPerCm);
+    profileRangeMode.value = settings.profileElevationRangeMode;
+    profileMin.value = String(settings.profileElevationMin);
+    profileMax.value = String(settings.profileElevationMax);
   };
 
   const updateUi = () => {
     settings = capture();
+    let canRender = true;
+    const hasMap = settings.outputMode !== 'profile';
+    const hasProfile = settings.outputMode !== 'map';
+    mapSection.hidden = !hasMap;
+    profileSection.hidden = !hasProfile;
+    profileHeightRow.hidden = settings.outputMode !== 'map-profile';
+    profileHeightLabel.textContent = `${settings.profileHeightPercent}%`;
     paddingLabel.textContent = `${settings.paddingPercent}%`;
-    root.querySelector<HTMLElement>('[data-image-halo-controls]')!.hidden = !settings.routeHalo;
+    q<HTMLElement>('[data-image-halo-controls]').hidden = !settings.routeHalo;
     paddingInput.disabled = settings.fitMode !== 'route';
     scaleRow.hidden = settings.fitMode !== 'scale';
     zoomRow.hidden = settings.fitMode !== 'zoom';
-    routeColor.disabled = !settings.includeCombinedRoute;
-    routeWidth.disabled = !settings.includeCombinedRoute;
-    routeOpacity.disabled = !settings.includeCombinedRoute;
-    haloCheck.disabled = !settings.includeCombinedRoute;
-    markerCheck.disabled = !settings.includeCombinedRoute;
+    profileDistanceScaleRow.hidden = settings.profileDistanceMode !== 'scale';
+    profileElevationScaleRow.hidden = settings.profileElevationMode !== 'scale' || settings.profileElevationRangeMode === 'fixed';
+    profileFixedRange.hidden = settings.profileElevationRangeMode !== 'fixed';
+    routeColor.disabled = !settings.includeCombinedRoute && hasMap;
+    routeWidth.disabled = !settings.includeCombinedRoute && hasMap;
+    routeOpacity.disabled = !settings.includeCombinedRoute && hasMap;
+    haloCheck.disabled = !settings.includeCombinedRoute && hasMap;
+    markerCheck.disabled = !settings.includeCombinedRoute && hasMap;
+    scaleCheck.disabled = !hasMap;
+    northCheck.disabled = !hasMap;
 
     try {
       const dimensions = makeImageDimensions(settings.widthMm, settings.heightMm, settings.dpi);
       let extentDescription = '';
-      if (settings.fitMode === 'scale') {
-        const ground = groundCoverageMeters(settings.widthMm, settings.heightMm, settings.scaleDenominator);
+      if (hasMap && settings.fitMode === 'scale') {
+        const mapHeightMm = settings.outputMode === 'map-profile' ? settings.heightMm * (1 - settings.profileHeightPercent / 100) : settings.heightMm;
+        const ground = groundCoverageMeters(settings.widthMm, mapHeightMm, settings.scaleDenominator);
         extentDescription = ` · 1:${settings.scaleDenominator.toLocaleString()} covers ${formatGroundDistance(ground.width)} × ${formatGroundDistance(ground.height)}`;
         extentInfo.textContent = 'Locked print scale uses the current map center. Pan the map to reposition the export.';
-      } else if (settings.fitMode === 'zoom') {
+      } else if (hasMap && settings.fitMode === 'zoom') {
         extentDescription = ` · web zoom ${settings.zoomLevel}`;
         extentInfo.textContent = 'Locked web zoom reproduces the OpenLayers zoom level at the current map center; print scale still varies with latitude and DPI.';
-      } else if (settings.fitMode === 'route') {
-        extentInfo.textContent = 'The exporter fits the route and applies the selected padding.';
-      } else {
-        extentInfo.textContent = 'The current export frame determines the geographic extent.';
-      }
+      } else if (hasMap && settings.fitMode === 'route') extentInfo.textContent = 'The exporter fits the route and applies the selected padding.';
+      else if (hasMap) extentInfo.textContent = 'The current export frame determines the geographic extent.';
+
       dimensionsText.textContent = `${dimensions.widthPx.toLocaleString()} × ${dimensions.heightPx.toLocaleString()} px · ${(dimensions.widthPx * dimensions.heightPx / 1_000_000).toFixed(1)} MP${extentDescription}`;
-      options.map.setExportFrameAspect(dimensions.aspect);
+      if (settings.outputMode === 'profile') options.map.setExportFrameAspect(undefined);
+      else {
+        const mapHeightPx = settings.outputMode === 'map-profile' ? dimensions.heightPx * (1 - settings.profileHeightPercent / 100) : dimensions.heightPx;
+        options.map.setExportFrameAspect(dimensions.widthPx / mapHeightPx);
+      }
     } catch (error) {
       dimensionsText.textContent = error instanceof Error ? error.message : String(error);
-      renderButton.disabled = true;
-      return;
+      canRender = false;
     }
 
-    const provider = getBaseMapDefinition(options.map.getBaseProviderId());
-    if (!settings.includeBaseMap) {
-      licenseCard.className = 'license-card safe';
-      licenseCard.innerHTML = '<strong>Basemap excluded</strong><span>The export contains only project/route overlays. No basemap attribution is required by this exporter.</span>';
-      renderButton.disabled = false;
-      return;
+    if (hasProfile) {
+      const profile = buildElevationProfile(profileSegmentsForState(options.getState()));
+      if (!profile) {
+        profileInfo.textContent = 'No GPX elevation values are available for this route.';
+        canRender = false;
+      } else {
+        const range = `${Math.round(profile.minElevationMeters)}–${Math.round(profile.maxElevationMeters)} m`;
+        const locks: string[] = [];
+        if (settings.profileDistanceMode === 'scale') locks.push(`horizontal ${formatGroundDistance(settings.profileDistanceMetersPerCm)} / cm`);
+        if (settings.profileElevationRangeMode === 'fixed') locks.push(`vertical range ${settings.profileElevationMin}–${settings.profileElevationMax} m`);
+        else if (settings.profileElevationMode === 'scale') locks.push(`vertical ${settings.profileElevationMetersPerCm} m / cm`);
+        profileInfo.textContent = `${formatGroundDistance(profile.totalDistanceMeters)} recorded distance · elevation ${range} · ${profile.sourceSegmentCount} segment${profile.sourceSegmentCount === 1 ? '' : 's'}${locks.length ? ` · ${locks.join(' · ')}` : ''}. Segment boundaries are not bridged.`;
+        if (settings.profileElevationRangeMode === 'fixed' && (!(settings.profileElevationMax > settings.profileElevationMin) || profile.minElevationMeters < settings.profileElevationMin || profile.maxElevationMeters > settings.profileElevationMax)) canRender = false;
+      }
     }
 
-    if (provider.publicationExportPolicy === 'allowed-with-attribution') {
+    if (!hasMap || !settings.includeBaseMap) {
       licenseCard.className = 'license-card safe';
-      licenseCard.innerHTML = `<strong>${provider.label}: publication export enabled</strong><span>${provider.publicationNotice}</span><span class="license-credit">Embedded credit: ${provider.publicationAttribution}</span>`;
-      renderButton.disabled = false;
+      licenseCard.innerHTML = hasMap
+        ? '<strong>Basemap excluded</strong><span>The export contains only project/route overlays. No basemap attribution is required by this exporter.</span>'
+        : '<strong>Profile-only export</strong><span>No basemap is rendered, so no basemap attribution is required.</span>';
     } else {
-      licenseCard.className = 'license-card warning';
-      licenseCard.innerHTML = `<strong>${provider.label}: basemap export blocked</strong><span>${provider.publicationNotice}</span><span>Choose OpenStreetMap/OpenFreeMap or uncheck “Include current basemap”.</span>`;
-      renderButton.disabled = true;
+      const provider = getBaseMapDefinition(options.map.getBaseProviderId());
+      if (provider.publicationExportPolicy === 'allowed-with-attribution') {
+        licenseCard.className = 'license-card safe';
+        licenseCard.innerHTML = `<strong>${provider.label}: publication export enabled</strong><span>${provider.publicationNotice}</span><span class="license-credit">Embedded credit: ${provider.publicationAttribution}</span>`;
+      } else {
+        licenseCard.className = 'license-card warning';
+        licenseCard.innerHTML = `<strong>${provider.label}: basemap export blocked</strong><span>${provider.publicationNotice}</span><span>Choose OpenStreetMap/OpenFreeMap or uncheck “Include current basemap”.</span>`;
+        canRender = false;
+      }
     }
+    renderButton.disabled = !canRender;
   };
 
   const markCustomStyle = () => {
@@ -287,7 +387,6 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     syncControls();
     updateUi();
   });
-
   layoutSelect.addEventListener('change', () => {
     if (layoutSelect.value !== 'custom') {
       const preset = getImageLayoutPreset(layoutSelect.value);
@@ -302,8 +401,8 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
   dpiSelect.addEventListener('change', updateUi);
 
   [baseCheck, tracksCheck, combinedCheck, markerCheck, haloCheck, borderCheck, scaleCheck, northCheck].forEach((input) => input.addEventListener('change', updateUi));
-  [fitSelect, mapScaleSelect].forEach((input) => input.addEventListener('change', updateUi));
-  [paddingInput, routeWidth, routeOpacity, haloWidth, zoomInput].forEach((input) => input.addEventListener('input', updateUi));
+  [outputSelect, fitSelect, mapScaleSelect, profileDistanceMode, profileElevationMode, profileRangeMode].forEach((input) => input.addEventListener('change', updateUi));
+  [paddingInput, routeWidth, routeOpacity, haloWidth, zoomInput, profileHeight, profileDistanceScale, profileElevationScale, profileMin, profileMax].forEach((input) => input.addEventListener('input', updateUi));
   [routeColor, backgroundColor, haloColor].forEach((input) => input.addEventListener('input', markCustomStyle));
   [titleInput, subtitleInput, captionInput].forEach((input) => input.addEventListener('input', updateUi));
 
@@ -316,7 +415,6 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
     updateUi();
     dialog.showModal();
   });
-
   dialog.addEventListener('close', () => options.map.setExportFrameAspect(undefined));
 
   renderButton.addEventListener('click', async () => {
@@ -334,29 +432,20 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
       const selectedPoints = selectedTrack ? flattenTrack(selectedTrack) : [];
       const routeStart = firstPiecePoints[0] ?? selectedPoints[0];
       const routeEnd = lastPiecePoints.at(-1) ?? selectedPoints.at(-1);
+      const profileSegments = profileSegmentsForState(state);
 
-      const result = await renderMapImage(options.map, {
-        dimensions,
-        ...settings,
-        routeStart,
-        routeEnd,
-      });
+      const result = await renderMapImage(options.map, { dimensions, ...settings, routeStart, routeEnd, profileSegments });
       currentBlob = await canvasToPngBlob(result.canvas);
       const displayCanvas = document.createElement('canvas');
-      const maxWidth = 720;
-      const scale = Math.min(1, maxWidth / result.canvas.width);
+      const scale = Math.min(1, 720 / result.canvas.width);
       displayCanvas.width = Math.round(result.canvas.width * scale);
       displayCanvas.height = Math.round(result.canvas.height * scale);
-      const context = displayCanvas.getContext('2d');
-      if (context) context.drawImage(result.canvas, 0, 0, displayCanvas.width, displayCanvas.height);
+      displayCanvas.getContext('2d')?.drawImage(result.canvas, 0, 0, displayCanvas.width, displayCanvas.height);
       preview.replaceChildren(displayCanvas);
       placeholder.hidden = true;
       downloadButton.disabled = false;
-      if (settings.fitMode === 'zoom') {
-        extentInfo.textContent = `Rendered at web zoom ${result.zoomLevel.toFixed(2)} · effective print scale about 1:${Math.round(result.scaleDenominator).toLocaleString()} at the map center.`;
-      } else if (settings.fitMode === 'scale') {
-        extentInfo.textContent = `Rendered at print scale 1:${Math.round(result.scaleDenominator).toLocaleString()} · web zoom ${result.zoomLevel.toFixed(2)} at the map center.`;
-      }
+      if (settings.outputMode !== 'profile' && settings.fitMode === 'zoom') extentInfo.textContent = `Rendered at web zoom ${result.zoomLevel.toFixed(2)} · effective print scale about 1:${Math.round(result.scaleDenominator).toLocaleString()} at the map center.`;
+      else if (settings.outputMode !== 'profile' && settings.fitMode === 'scale') extentInfo.textContent = `Rendered at print scale 1:${Math.round(result.scaleDenominator).toLocaleString()} · web zoom ${result.zoomLevel.toFixed(2)} at the map center.`;
     } catch (error) {
       alert(error instanceof Error ? error.message : String(error));
     } finally {
@@ -366,13 +455,11 @@ export function initMapImageExportUi(root: HTMLElement, options: MapImageExportU
   });
 
   downloadButton.addEventListener('click', () => {
-    if (!currentBlob) return;
-    downloadBlob(`gpx-map-${new Date().toISOString().slice(0, 10)}.png`, currentBlob);
+    if (currentBlob) downloadBlob(`gpx-map-${new Date().toISOString().slice(0, 10)}.png`, currentBlob);
   });
 
   syncControls();
   updateUi();
-
   return {
     getSettings: () => ({ ...settings }),
     applySettings: (next) => {
