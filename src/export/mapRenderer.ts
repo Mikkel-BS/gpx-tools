@@ -4,6 +4,7 @@ import type { MapController } from '../map/mapController';
 import { getBaseMapDefinition } from '../map/sources/baseMaps';
 import { drawExportDecorations } from './decorations';
 import type { ImageExportDimensions } from './layout';
+import type { ImageExtentMode } from './settings';
 
 export interface MapImageRenderOptions {
   dimensions: ImageExportDimensions;
@@ -12,7 +13,9 @@ export interface MapImageRenderOptions {
   includeCombinedRoute: boolean;
   showScaleBar: boolean;
   showNorthArrow: boolean;
-  fitMode: 'current' | 'route';
+  fitMode: ImageExtentMode;
+  scaleDenominator: number;
+  zoomLevel: number;
   paddingPercent: number;
   backgroundColor: string;
   border: boolean;
@@ -35,6 +38,8 @@ export interface MapImageRenderResult {
   attribution?: string;
   providerId: string;
   metersPerPixel: number;
+  scaleDenominator: number;
+  zoomLevel: number;
 }
 
 function canvasMatrix(transform: string): [number, number, number, number, number, number] {
@@ -129,6 +134,20 @@ function drawRouteMarker(context: CanvasRenderingContext2D, pixel: number[] | nu
   context.restore();
 }
 
+function applyLockedScale(
+  view: ReturnType<ReturnType<MapController['getMapForExport']>['getView']>,
+  center: [number, number],
+  scaleDenominator: number,
+  dpi: number,
+): void {
+  if (!Number.isFinite(scaleDenominator) || scaleDenominator <= 0) throw new Error('Map scale must be greater than zero.');
+  const targetMetersPerPixel = scaleDenominator * 0.0254 / dpi;
+  const metersPerProjectionPixel = getPointResolution(view.getProjection(), 1, center, 'm');
+  if (!Number.isFinite(metersPerProjectionPixel) || metersPerProjectionPixel <= 0) throw new Error('Unable to calculate map scale at this location.');
+  view.setCenter(center);
+  view.setResolution(targetMetersPerPixel / metersPerProjectionPixel);
+}
+
 export async function renderMapImage(controller: MapController, options: MapImageRenderOptions): Promise<MapImageRenderResult> {
   const map = controller.getMapForExport();
   const view = map.getView();
@@ -175,6 +194,14 @@ export async function renderMapImage(controller: MapController, options: MapImag
       } else {
         view.fit(currentExtent, { size: [widthPx, heightPx], padding: [0, 0, 0, 0], duration: 0 });
       }
+    } else if (options.fitMode === 'scale') {
+      if (!originalCenter) throw new Error('Map center is unavailable for locked-scale export.');
+      applyLockedScale(view, originalCenter, options.scaleDenominator, options.dimensions.dpi);
+    } else if (options.fitMode === 'zoom') {
+      if (!originalCenter) throw new Error('Map center is unavailable for locked-zoom export.');
+      if (!Number.isFinite(options.zoomLevel) || options.zoomLevel < 0 || options.zoomLevel > 24) throw new Error('Web zoom must be between 0 and 24.');
+      view.setCenter(originalCenter);
+      view.setZoom(options.zoomLevel);
     } else {
       view.fit(currentExtent, { size: [widthPx, heightPx], padding: [0, 0, 0, 0], duration: 0 });
     }
@@ -184,6 +211,8 @@ export async function renderMapImage(controller: MapController, options: MapImag
     const center = view.getCenter();
     const resolution = view.getResolution() ?? 1;
     const metersPerPixel = center ? getPointResolution(view.getProjection(), resolution, center, 'm') : resolution;
+    const scaleDenominator = metersPerPixel * options.dimensions.dpi / 0.0254;
+    const zoomLevel = view.getZoom() ?? options.zoomLevel;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas export is unavailable in this browser.');
     const attribution = options.includeBaseMap ? provider.publicationAttribution : undefined;
@@ -211,7 +240,7 @@ export async function renderMapImage(controller: MapController, options: MapImag
       context.restore();
     }
 
-    return { canvas, attribution, providerId: provider.id, metersPerPixel };
+    return { canvas, attribution, providerId: provider.id, metersPerPixel, scaleDenominator, zoomLevel };
   } finally {
     controller.setExportRouteStyle(undefined);
     controller.setLayerVisibility('base', visibility.base);
