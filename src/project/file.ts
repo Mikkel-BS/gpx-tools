@@ -213,7 +213,9 @@ function parseImage(value: unknown): ImageExportSettings {
   const defaults = defaultImageExportSettings();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
   const item = value as Record<string, unknown>;
-  const fitMode = item.fitMode === 'current' || item.fitMode === 'route' ? item.fitMode : defaults.fitMode;
+  const fitMode = item.fitMode === 'current' || item.fitMode === 'route' || item.fitMode === 'scale' || item.fitMode === 'zoom'
+    ? item.fitMode
+    : defaults.fitMode;
   return {
     presetId: optionalString(item.presetId, defaults.presetId),
     layoutId: optionalString(item.layoutId, defaults.layoutId),
@@ -226,6 +228,8 @@ function parseImage(value: unknown): ImageExportSettings {
     showScaleBar: bool(item.showScaleBar, defaults.showScaleBar),
     showNorthArrow: bool(item.showNorthArrow, defaults.showNorthArrow),
     fitMode,
+    scaleDenominator: bounded(item.scaleDenominator, defaults.scaleDenominator, 1_000, 5_000_000),
+    zoomLevel: bounded(item.zoomLevel, defaults.zoomLevel, 0, 24),
     paddingPercent: bounded(item.paddingPercent, defaults.paddingPercent, 0, 35),
     backgroundColor: optionalString(item.backgroundColor, defaults.backgroundColor),
     border: bool(item.border, defaults.border),
