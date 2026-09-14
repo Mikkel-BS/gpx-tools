@@ -14,6 +14,15 @@ function cloneSegments(segments: GpxSegment[]): GpxSegment[] {
   return segments.map((segment) => ({ points: segment.points.map((point) => ({ ...point })) }));
 }
 
+function pointFromElement(pt: Element): GpxPoint | undefined {
+  const lat = Number(pt.getAttribute('lat'));
+  const lon = Number(pt.getAttribute('lon'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return undefined;
+  const eleElement = childElements(pt, 'ele')[0];
+  const ele = eleElement ? Number(eleElement.textContent) : undefined;
+  return Number.isFinite(ele) ? { lat, lon, ele } : { lat, lon };
+}
+
 export function parseGpx(xml: string, fileName: string): GpxTrack {
   const doc = parser.parseFromString(xml, 'application/xml');
   const parseError = doc.querySelector('parsererror');
@@ -27,9 +36,8 @@ export function parseGpx(xml: string, fileName: string): GpxTrack {
     for (const seg of childElements(trk, 'trkseg')) {
       const points: GpxPoint[] = [];
       for (const pt of childElements(seg, 'trkpt')) {
-        const lat = Number(pt.getAttribute('lat'));
-        const lon = Number(pt.getAttribute('lon'));
-        if (Number.isFinite(lat) && Number.isFinite(lon)) points.push({ lat, lon });
+        const point = pointFromElement(pt);
+        if (point) points.push(point);
       }
       if (points.length) segments.push({ points });
     }
@@ -40,9 +48,8 @@ export function parseGpx(xml: string, fileName: string): GpxTrack {
     for (const rte of routes) {
       const points: GpxPoint[] = [];
       for (const pt of childElements(rte, 'rtept')) {
-        const lat = Number(pt.getAttribute('lat'));
-        const lon = Number(pt.getAttribute('lon'));
-        if (Number.isFinite(lat) && Number.isFinite(lon)) points.push({ lat, lon });
+        const point = pointFromElement(pt);
+        if (point) points.push(point);
       }
       if (points.length) segments.push({ points });
     }
