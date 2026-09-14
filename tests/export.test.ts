@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { chooseNiceScaleDistance } from '../src/export/decorations';
 import { makeImageDimensions, mmToPixels } from '../src/export/layout';
-import { applyImageStylePreset, defaultImageExportSettings, imageStylePresets } from '../src/export/settings';
+import {
+  applyImageStylePreset,
+  defaultImageExportSettings,
+  groundCoverageMeters,
+  imageStylePresets,
+  mapScalePresets,
+} from '../src/export/settings';
 import { getBaseMapDefinition } from '../src/map/sources/baseMaps';
 import { getRasterProvider } from '../src/map/sources/providers';
 import { vectorStyleProviders } from '../src/map/sources/vectorStyles';
@@ -23,6 +29,11 @@ describe('publication image export', () => {
     expect(chooseNiceScaleDistance(78)).toBe(50);
     expect(chooseNiceScaleDistance(240)).toBe(200);
     expect(chooseNiceScaleDistance(720)).toBe(500);
+  });
+
+  it('offers practical Norwegian print-map scales and calculates physical ground coverage', () => {
+    expect(mapScalePresets.map((preset) => preset.denominator)).toEqual([10_000, 25_000, 50_000, 100_000, 250_000]);
+    expect(groundCoverageMeters(160, 100, 50_000)).toEqual({ width: 8_000, height: 5_000 });
   });
 
   it('provides a small reusable publication style library without overwriting project content', () => {
