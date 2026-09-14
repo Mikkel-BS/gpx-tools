@@ -12,6 +12,7 @@ export interface ElevationProfilePath {
 
 export interface ElevationProfile {
   paths: ElevationProfilePath[];
+  breakDistancesMeters: number[];
   totalDistanceMeters: number;
   minElevationMeters: number;
   maxElevationMeters: number;
@@ -26,12 +27,14 @@ export interface ElevationProfile {
  */
 export function buildElevationProfile(segments: GpxSegment[]): ElevationProfile | undefined {
   const paths: ElevationProfilePath[] = [];
+  const breakDistancesMeters: number[] = [];
   let cumulativeDistance = 0;
   let minElevation = Number.POSITIVE_INFINITY;
   let maxElevation = Number.NEGATIVE_INFINITY;
   let elevationPointCount = 0;
 
-  for (const segment of segments) {
+  segments.forEach((segment, segmentIndex) => {
+    if (segmentIndex > 0) breakDistancesMeters.push(cumulativeDistance);
     let currentPath: ElevationProfileSample[] = [];
     for (let index = 0; index < segment.points.length; index += 1) {
       const point = segment.points[index];
@@ -49,12 +52,12 @@ export function buildElevationProfile(segments: GpxSegment[]): ElevationProfile 
       }
     }
     if (currentPath.length) paths.push({ samples: currentPath });
-    // No distance is inserted between this segment and the next one.
-  }
+  });
 
   if (!elevationPointCount) return undefined;
   return {
     paths,
+    breakDistancesMeters,
     totalDistanceMeters: cumulativeDistance,
     minElevationMeters: minElevation,
     maxElevationMeters: maxElevation,
