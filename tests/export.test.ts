@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chooseNiceScaleDistance } from '../src/export/decorations';
+import { buildElevationProfile, profileHorizontalCoverageMeters, profileVerticalCoverageMeters } from '../src/export/elevationProfile';
 import { makeImageDimensions, mmToPixels } from '../src/export/layout';
 import {
   applyImageStylePreset,
@@ -34,6 +35,25 @@ describe('publication image export', () => {
   it('offers practical Norwegian print-map scales and calculates physical ground coverage', () => {
     expect(mapScalePresets.map((preset) => preset.denominator)).toEqual([10_000, 25_000, 50_000, 100_000, 250_000]);
     expect(groundCoverageMeters(160, 100, 50_000)).toEqual({ width: 8_000, height: 5_000 });
+  });
+
+  it('builds elevation profiles without adding distance across segment gaps', () => {
+    const profile = buildElevationProfile([
+      { points: [{ lat: 60, lon: 10, ele: 100 }, { lat: 60.001, lon: 10, ele: 150 }] },
+      { points: [{ lat: 61, lon: 11, ele: 400 }, { lat: 61.001, lon: 11, ele: 450 }] },
+    ])!;
+    expect(profile.sourceSegmentCount).toBe(2);
+    expect(profile.breakDistancesMeters).toHaveLength(1);
+    expect(profile.totalDistanceMeters).toBeGreaterThan(200);
+    expect(profile.totalDistanceMeters).toBeLessThan(230);
+    expect(profile.minElevationMeters).toBe(100);
+    expect(profile.maxElevationMeters).toBe(450);
+    expect(profile.paths).toHaveLength(2);
+  });
+
+  it('expresses locked profile axes as real physical comparison scales', () => {
+    expect(profileHorizontalCoverageMeters(160, 1000)).toBe(16_000);
+    expect(profileVerticalCoverageMeters(40, 100)).toBe(400);
   });
 
   it('provides a small reusable publication style library without overwriting project content', () => {
