@@ -1,4 +1,7 @@
 export type ImageExtentMode = 'current' | 'route' | 'scale' | 'zoom';
+export type ImageOutputMode = 'map' | 'map-profile' | 'profile';
+export type ProfileAxisMode = 'fit' | 'scale';
+export type ProfileElevationRangeMode = 'auto' | 'fixed';
 
 export interface ImageExportSettings {
   presetId: string;
@@ -6,6 +9,7 @@ export interface ImageExportSettings {
   widthMm: number;
   heightMm: number;
   dpi: number;
+  outputMode: ImageOutputMode;
   includeBaseMap: boolean;
   includeTracks: boolean;
   includeCombinedRoute: boolean;
@@ -27,6 +31,14 @@ export interface ImageExportSettings {
   subtitle: string;
   caption: string;
   showStartEndMarkers: boolean;
+  profileHeightPercent: number;
+  profileDistanceMode: ProfileAxisMode;
+  profileDistanceMetersPerCm: number;
+  profileElevationMode: ProfileAxisMode;
+  profileElevationMetersPerCm: number;
+  profileElevationRangeMode: ProfileElevationRangeMode;
+  profileElevationMin: number;
+  profileElevationMax: number;
 }
 
 export interface ImageStylePreset {
@@ -52,7 +64,6 @@ export interface MapScalePreset {
   label: string;
 }
 
-/** Practical print-map scales for local, outdoor and regional maps in Norway. */
 export const mapScalePresets: MapScalePreset[] = [
   { denominator: 10_000, label: '1:10 000 · local / urban detail' },
   { denominator: 25_000, label: '1:25 000 · detailed outdoor' },
@@ -118,6 +129,7 @@ export function defaultImageExportSettings(): ImageExportSettings {
     widthMm: 160,
     heightMm: 100,
     dpi: 300,
+    outputMode: 'map',
     includeBaseMap: true,
     includeTracks: false,
     includeCombinedRoute: true,
@@ -139,6 +151,14 @@ export function defaultImageExportSettings(): ImageExportSettings {
     subtitle: '',
     caption: '',
     showStartEndMarkers: true,
+    profileHeightPercent: 30,
+    profileDistanceMode: 'fit',
+    profileDistanceMetersPerCm: 1000,
+    profileElevationMode: 'fit',
+    profileElevationMetersPerCm: 100,
+    profileElevationRangeMode: 'auto',
+    profileElevationMin: 0,
+    profileElevationMax: 1000,
   };
 }
 
