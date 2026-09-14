@@ -1,6 +1,6 @@
 import type { RoutePiece } from '../editor/model';
 import { parseGpx } from '../gpx/parser';
-import { segmentsToCoordinateOnlyGpx } from '../gpx/serialize';
+import { segmentsToWorkingGpx } from '../gpx/serialize';
 import type { GpxSegment, GpxTrack } from '../gpx/types';
 import { defaultImageExportSettings, type ImageExportSettings } from '../export/settings';
 import type { AppState, TrackSelection } from '../state/store';
@@ -37,9 +37,8 @@ interface ProjectTrack {
   id: string;
   fileName: string;
   importedAt: number;
-  /** Original imported GPX, preserved verbatim and kept as the canonical source representation. */
   originalXml: string;
-  /** Present only when working geometry differs from the original. Standard coordinate-only GPX. */
+  /** Present only when working geometry differs. Standard GPX, including elevation where available. */
   workingXml?: string;
 }
 
@@ -63,7 +62,9 @@ function segmentsEqual(a: GpxSegment[], b: GpxSegment[]): boolean {
     const right = b[segmentIndex].points;
     if (left.length !== right.length) return false;
     for (let pointIndex = 0; pointIndex < left.length; pointIndex += 1) {
-      if (left[pointIndex].lat !== right[pointIndex].lat || left[pointIndex].lon !== right[pointIndex].lon) return false;
+      const l = left[pointIndex];
+      const r = right[pointIndex];
+      if (l.lat !== r.lat || l.lon !== r.lon || l.ele !== r.ele) return false;
     }
   }
   return true;
@@ -84,9 +85,7 @@ function toWireTrack(track: GpxTrack): ProjectTrack {
     importedAt: track.importedAt,
     originalXml: track.originalXml,
   };
-  if (!segmentsEqual(track.segments, track.originalSegments)) {
-    result.workingXml = segmentsToCoordinateOnlyGpx(track.segments);
-  }
+  if (!segmentsEqual(track.segments, track.originalSegments)) result.workingXml = segmentsToWorkingGpx(track.segments);
   return result;
 }
 
@@ -111,7 +110,6 @@ export function createProjectDocument(state: AppState, map: ProjectMapState, ima
   };
 }
 
-/** Project files are intentionally minified; embedded original GPX remains standard, recognizable GPX text. */
 export function serializeProject(state: AppState, map: ProjectMapState, image = defaultImageExportSettings()): string {
   const wire: ProjectWire = {
     format: PROJECT_FORMAT,
@@ -132,25 +130,23 @@ function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object.`);
   return value as Record<string, unknown>;
 }
-
 function stringValue(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value) throw new Error(`${label} must be a non-empty string.`);
   return value;
 }
-
-function optionalString(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback;
-}
-
+function optionalString(value: unknown, fallback = ''): string { return typeof value === 'string' ? value : fallback; }
 function finiteNumber(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${label} must be a finite number.`);
   return value;
 }
-
 function integer(value: unknown, label: string): number {
   const number = finiteNumber(value, label);
   if (!Number.isInteger(number)) throw new Error(`${label} must be an integer.`);
   return number;
+}
+function bool(value: unknown, fallback: boolean): boolean { return typeof value === 'boolean' ? value : fallback; }
+function bounded(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
 }
 
 function piece(value: unknown, index: number): RoutePiece {
@@ -201,27 +197,22 @@ function parseMap(value: unknown): ProjectMapState {
   };
 }
 
-function bool(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function bounded(value: unknown, fallback: number, min: number, max: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
-}
-
 function parseImage(value: unknown): ImageExportSettings {
   const defaults = defaultImageExportSettings();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
   const item = value as Record<string, unknown>;
-  const fitMode = item.fitMode === 'current' || item.fitMode === 'route' || item.fitMode === 'scale' || item.fitMode === 'zoom'
-    ? item.fitMode
-    : defaults.fitMode;
+  const fitMode = item.fitMode === 'current' || item.fitMode === 'route' || item.fitMode === 'scale' || item.fitMode === 'zoom' ? item.fitMode : defaults.fitMode;
+  const outputMode = item.outputMode === 'map' || item.outputMode === 'map-profile' || item.outputMode === 'profile' ? item.outputMode : defaults.outputMode;
+  const profileDistanceMode = item.profileDistanceMode === 'fit' || item.profileDistanceMode === 'scale' ? item.profileDistanceMode : defaults.profileDistanceMode;
+  const profileElevationMode = item.profileElevationMode === 'fit' || item.profileElevationMode === 'scale' ? item.profileElevationMode : defaults.profileElevationMode;
+  const profileElevationRangeMode = item.profileElevationRangeMode === 'auto' || item.profileElevationRangeMode === 'fixed' ? item.profileElevationRangeMode : defaults.profileElevationRangeMode;
   return {
     presetId: optionalString(item.presetId, defaults.presetId),
     layoutId: optionalString(item.layoutId, defaults.layoutId),
     widthMm: bounded(item.widthMm, defaults.widthMm, 10, 1000),
     heightMm: bounded(item.heightMm, defaults.heightMm, 10, 1000),
     dpi: bounded(item.dpi, defaults.dpi, 72, 600),
+    outputMode,
     includeBaseMap: bool(item.includeBaseMap, defaults.includeBaseMap),
     includeTracks: bool(item.includeTracks, defaults.includeTracks),
     includeCombinedRoute: bool(item.includeCombinedRoute, defaults.includeCombinedRoute),
@@ -243,6 +234,14 @@ function parseImage(value: unknown): ImageExportSettings {
     subtitle: optionalString(item.subtitle),
     caption: optionalString(item.caption),
     showStartEndMarkers: bool(item.showStartEndMarkers, defaults.showStartEndMarkers),
+    profileHeightPercent: bounded(item.profileHeightPercent, defaults.profileHeightPercent, 20, 60),
+    profileDistanceMode,
+    profileDistanceMetersPerCm: bounded(item.profileDistanceMetersPerCm, defaults.profileDistanceMetersPerCm, 50, 100_000),
+    profileElevationMode,
+    profileElevationMetersPerCm: bounded(item.profileElevationMetersPerCm, defaults.profileElevationMetersPerCm, 10, 10_000),
+    profileElevationRangeMode,
+    profileElevationMin: bounded(item.profileElevationMin, defaults.profileElevationMin, -1000, 10_000),
+    profileElevationMax: bounded(item.profileElevationMax, defaults.profileElevationMax, -1000, 10_000),
   };
 }
 
@@ -273,18 +272,8 @@ function parseCurrentProject(root: Record<string, unknown>): ProjectDocument {
     const originalXml = stringValue(item.originalXml, `tracks[${index}].originalXml`);
     const originalParsed = parseGpx(originalXml, fileName);
     let segments = originalParsed.segments;
-    if (item.workingXml !== undefined) {
-      const workingXml = stringValue(item.workingXml, `tracks[${index}].workingXml`);
-      segments = parseGpx(workingXml, fileName).segments;
-    }
-    return {
-      id,
-      fileName,
-      importedAt,
-      originalXml,
-      originalSegments: originalParsed.originalSegments,
-      segments,
-    };
+    if (item.workingXml !== undefined) segments = parseGpx(stringValue(item.workingXml, `tracks[${index}].workingXml`), fileName).segments;
+    return { id, fileName, importedAt, originalXml, originalSegments: originalParsed.originalSegments, segments };
   });
 
   if (!Array.isArray(root.pieces)) throw new Error('pieces must be an array.');
@@ -309,11 +298,7 @@ function parseCurrentProject(root: Record<string, unknown>): ProjectDocument {
 
 export function parseProject(text: string): ProjectDocument {
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('Project file is not valid JSON.');
-  }
+  try { parsed = JSON.parse(text); } catch { throw new Error('Project file is not valid JSON.'); }
   const root = record(parsed, 'Project');
   if (root.format !== PROJECT_FORMAT) throw new Error('This is not a GPX & Map Tool project file.');
   if (root.version !== PROJECT_VERSION) throw new Error(`Unsupported project version: ${String(root.version)}.`);
