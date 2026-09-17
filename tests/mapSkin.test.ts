@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { applyActiveMvpMapSkin, setActiveMvpMapSkin } from '../src/map/skins/mvp';
+import {
+  applyActiveMvpMapSkin,
+  DEFAULT_MVP_SKIN_VECTOR_PROVIDER_ID,
+  resolveMvpSkinSelection,
+  setActiveMvpMapSkin,
+} from '../src/map/skins/mvp';
 
 describe('MVP vector map skins', () => {
+  it('allows choosing watercolor from the default raster map by switching to a vector provider', () => {
+    const resolved = resolveMvpSkinSelection('watercolor', 'osm');
+    expect(resolved.skin.id).toBe('watercolor');
+    expect(resolved.baseProviderId).toBe(DEFAULT_MVP_SKIN_VECTOR_PROVIDER_ID);
+  });
+
+  it('keeps an already-selected vector provider when choosing a skin', () => {
+    const resolved = resolveMvpSkinSelection('watercolor', 'openfreemap-fiord');
+    expect(resolved.skin.id).toBe('watercolor');
+    expect(resolved.baseProviderId).toBe('openfreemap-fiord');
+  });
+
   it('leaves geometry-driving style fields untouched', () => {
     const sourceStyle = {
       version: 8,
