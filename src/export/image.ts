@@ -1,10 +1,7 @@
-import { applyActiveMvpMapSkinToCanvas } from '../map/skins/mvp';
-
 export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     try {
-      const outputCanvas = applyActiveMvpMapSkinToCanvas(canvas);
-      outputCanvas.toBlob((blob) => {
+      canvas.toBlob((blob) => {
         if (blob) resolve(blob);
         else reject(new Error('PNG export failed. The basemap may not permit cross-origin canvas export.'));
       }, 'image/png');
