@@ -1,9 +1,39 @@
-export type MvpMapSkinId = 'none' | 'watercolor';
+export type MvpMapSkinId =
+  | 'none'
+  | 'watercolor'
+  | 'antique-atlas'
+  | 'alpine-topo'
+  | 'midnight-neon'
+  | 'blueprint'
+  | 'autumn-field';
+
+interface MvpMapSkinPalette {
+  background: string;
+  water: string;
+  waterLine: string;
+  forest: string;
+  urban: string;
+  building: string;
+  openLand: string;
+  contour: string;
+  boundary: string;
+  trail: string;
+  roadMajor: string;
+  roadMajorCasing: string;
+  roadMinor: string;
+  label: string;
+  labelHalo: string;
+  fillOpacity?: number;
+  forestOpacity?: number;
+  roadOpacity?: number;
+  labelHaloWidth?: number;
+}
 
 export interface MvpMapSkin {
   id: MvpMapSkinId;
   label: string;
   description: string;
+  palette?: MvpMapSkinPalette;
 }
 
 export const DEFAULT_MVP_SKIN_VECTOR_PROVIDER_ID = 'openfreemap-positron';
@@ -16,8 +46,72 @@ export const mvpMapSkins: MvpMapSkin[] = [
   },
   {
     id: 'watercolor',
-    label: 'Watercolor hiking (MVP)',
+    label: 'Watercolor hiking',
     description: 'Warm paper, muted landscape colors and restrained ink-like linework.',
+    palette: {
+      background: '#f3ecda', water: '#9ebac6', waterLine: '#728f9b', forest: '#a7b39a',
+      urban: '#ddd1bd', building: '#cdbb9f', openLand: '#d7cfaa', contour: '#a68a69',
+      boundary: '#8a7c6c', trail: '#756555', roadMajor: '#e3c18b', roadMajorCasing: '#806246',
+      roadMinor: '#c9aa7a', label: '#40372f', labelHalo: '#f3ecda', forestOpacity: 0.72,
+    },
+  },
+  {
+    id: 'antique-atlas',
+    label: 'Antique atlas',
+    description: 'Sepia paper, faded blue water and copper-brown roadwork inspired by old printed atlases.',
+    palette: {
+      background: '#e8dcc0', water: '#a8bcc0', waterLine: '#6f8588', forest: '#a9aa83',
+      urban: '#cdbda5', building: '#ad967a', openLand: '#d5c69f', contour: '#9a7d59',
+      boundary: '#8c6c58', trail: '#705a44', roadMajor: '#d2a467', roadMajorCasing: '#73513c',
+      roadMinor: '#b88d5d', label: '#3b2f25', labelHalo: '#e8dcc0', fillOpacity: 0.82,
+    },
+  },
+  {
+    id: 'alpine-topo',
+    label: 'Alpine topo',
+    description: 'Crisp pale terrain, strong contours, cool water and high-visibility hiking lines.',
+    palette: {
+      background: '#f5f2e8', water: '#8cb9cf', waterLine: '#4f8299', forest: '#a9bf9b',
+      urban: '#dedbd0', building: '#bdb8aa', openLand: '#d7d3a8', contour: '#9b7650',
+      boundary: '#82766a', trail: '#8d3f2f', roadMajor: '#f0c56e', roadMajorCasing: '#8f7444',
+      roadMinor: '#d2b685', label: '#2f3330', labelHalo: '#f5f2e8', forestOpacity: 0.64,
+      labelHaloWidth: 1.35,
+    },
+  },
+  {
+    id: 'midnight-neon',
+    label: 'Midnight neon',
+    description: 'Dark navy ground with cyan water, violet vegetation and luminous road accents.',
+    palette: {
+      background: '#101521', water: '#123d57', waterLine: '#43c6e8', forest: '#1f3c35',
+      urban: '#242838', building: '#3c4053', openLand: '#303749', contour: '#6c6489',
+      boundary: '#8b78a7', trail: '#ff7cc8', roadMajor: '#ffc857', roadMajorCasing: '#5f4d2a',
+      roadMinor: '#6cd4ff', label: '#eef4ff', labelHalo: '#101521', fillOpacity: 0.9,
+      forestOpacity: 0.9, roadOpacity: 0.96, labelHaloWidth: 1.5,
+    },
+  },
+  {
+    id: 'blueprint',
+    label: 'Blueprint',
+    description: 'Technical drawing aesthetic: deep blue ground, pale cyan linework and restrained fills.',
+    palette: {
+      background: '#153858', water: '#1e4f72', waterLine: '#8fd5e5', forest: '#214a61',
+      urban: '#264663', building: '#3c6480', openLand: '#1c4260', contour: '#78aabd',
+      boundary: '#95b8c8', trail: '#d6edf3', roadMajor: '#f2f3dc', roadMajorCasing: '#7694a6',
+      roadMinor: '#b6d9e5', label: '#eef9fb', labelHalo: '#153858', fillOpacity: 0.82,
+      forestOpacity: 0.72, labelHaloWidth: 1.45,
+    },
+  },
+  {
+    id: 'autumn-field',
+    label: 'Autumn field',
+    description: 'Moss, ochre and rust tones with subdued blue-grey water and warm rural character.',
+    palette: {
+      background: '#efe5ce', water: '#91a8aa', waterLine: '#627b7d', forest: '#858e5c',
+      urban: '#d2bfa8', building: '#b59273', openLand: '#c9ab68', contour: '#976944',
+      boundary: '#765e50', trail: '#9b4f35', roadMajor: '#d78c45', roadMajorCasing: '#6f4932',
+      roadMinor: '#b97848', label: '#3d3329', labelHalo: '#efe5ce', forestOpacity: 0.8,
+    },
   },
 ];
 
@@ -59,11 +153,6 @@ export function isVectorMapProviderId(providerId: string): boolean {
   return providerId.startsWith('openfreemap-');
 }
 
-/**
- * Pure interaction rule used by the UI and tests.
- * Selecting a non-default skin from a raster map automatically moves to the
- * default vector provider, because skins operate on vector-style paint values.
- */
 export function resolveMvpSkinSelection(skinId: string, baseProviderId: string): {
   skin: MvpMapSkin;
   baseProviderId: string;
@@ -76,74 +165,78 @@ export function resolveMvpSkinSelection(skinId: string, baseProviderId: string):
 }
 
 /**
- * MVP skinning is deliberately limited to Mapbox-style paint/layout values.
- * Sources, source-layer references, filters, layer order and feature geometry
- * are copied unchanged. GPX layers live outside this style and are unaffected.
+ * Deliberately changes only paint properties. Sources, source-layer references,
+ * filters, layout, layer ordering, zoom bounds and feature geometry are untouched.
+ * GPX layers are rendered separately and are unaffected by map skins.
  */
 export function applyActiveMvpMapSkin(style: Record<string, unknown>): Record<string, unknown> {
   const skin = getActiveMvpMapSkin();
-  if (skin.id === 'none') return style;
+  const palette = skin.palette;
+  if (!palette) return style;
 
   const output = structuredClone(style);
   const layers = Array.isArray(output.layers) ? output.layers as JsonObject[] : [];
+  const fillOpacity = palette.fillOpacity ?? 0.7;
+  const forestOpacity = palette.forestOpacity ?? 0.72;
+  const roadOpacity = palette.roadOpacity ?? 0.9;
 
   for (const layer of layers) {
     const type = typeof layer.type === 'string' ? layer.type : '';
     const fp = fingerprint(layer);
 
     if (type === 'background') {
-      setPaint(layer, 'background-color', '#f3ecda');
+      setPaint(layer, 'background-color', palette.background);
       continue;
     }
 
     if (type === 'fill') {
       if (/water|lake|ocean|sea/.test(fp)) {
-        setPaint(layer, 'fill-color', '#9ebac6');
+        setPaint(layer, 'fill-color', palette.water);
         setPaint(layer, 'fill-opacity', 0.92);
       } else if (/wood|forest|landcover|park|nature|scrub|vegetation/.test(fp)) {
-        setPaint(layer, 'fill-color', '#a7b39a');
-        setPaint(layer, 'fill-opacity', 0.72);
+        setPaint(layer, 'fill-color', palette.forest);
+        setPaint(layer, 'fill-opacity', forestOpacity);
       } else if (/residential|urban|industrial|commercial/.test(fp)) {
-        setPaint(layer, 'fill-color', '#ddd1bd');
-        setPaint(layer, 'fill-opacity', 0.7);
+        setPaint(layer, 'fill-color', palette.urban);
+        setPaint(layer, 'fill-opacity', fillOpacity);
       } else if (/building/.test(fp)) {
-        setPaint(layer, 'fill-color', '#cdbb9f');
-        setPaint(layer, 'fill-opacity', 0.72);
+        setPaint(layer, 'fill-color', palette.building);
+        setPaint(layer, 'fill-opacity', Math.min(1, fillOpacity + 0.02));
       } else if (/grass|meadow|farmland|landuse/.test(fp)) {
-        setPaint(layer, 'fill-color', '#d7cfaa');
-        setPaint(layer, 'fill-opacity', 0.56);
+        setPaint(layer, 'fill-color', palette.openLand);
+        setPaint(layer, 'fill-opacity', Math.max(0.45, fillOpacity - 0.12));
       }
       continue;
     }
 
     if (type === 'line') {
       if (/water|river|stream|canal/.test(fp)) {
-        setPaint(layer, 'line-color', '#728f9b');
-        setPaint(layer, 'line-opacity', 0.8);
+        setPaint(layer, 'line-color', palette.waterLine);
+        setPaint(layer, 'line-opacity', 0.84);
       } else if (/contour/.test(fp)) {
-        setPaint(layer, 'line-color', '#a68a69');
-        setPaint(layer, 'line-opacity', 0.52);
+        setPaint(layer, 'line-color', palette.contour);
+        setPaint(layer, 'line-opacity', 0.58);
       } else if (/boundary|admin/.test(fp)) {
-        setPaint(layer, 'line-color', '#8a7c6c');
-        setPaint(layer, 'line-opacity', 0.55);
+        setPaint(layer, 'line-color', palette.boundary);
+        setPaint(layer, 'line-opacity', 0.58);
       } else if (/path|track|trail|footway|cycleway|bridleway/.test(fp)) {
-        setPaint(layer, 'line-color', '#756555');
-        setPaint(layer, 'line-opacity', 0.82);
+        setPaint(layer, 'line-color', palette.trail);
+        setPaint(layer, 'line-opacity', 0.86);
         setPaint(layer, 'line-dasharray', [2.5, 2]);
       } else if (/motorway|trunk|primary|secondary/.test(fp)) {
-        setPaint(layer, 'line-color', /casing|outline/.test(fp) ? '#806246' : '#e3c18b');
-        setPaint(layer, 'line-opacity', 0.9);
+        setPaint(layer, 'line-color', /casing|outline/.test(fp) ? palette.roadMajorCasing : palette.roadMajor);
+        setPaint(layer, 'line-opacity', roadOpacity);
       } else if (/road|street|tertiary|service/.test(fp)) {
-        setPaint(layer, 'line-color', '#c9aa7a');
-        setPaint(layer, 'line-opacity', 0.86);
+        setPaint(layer, 'line-color', palette.roadMinor);
+        setPaint(layer, 'line-opacity', Math.max(0.72, roadOpacity - 0.04));
       }
       continue;
     }
 
     if (type === 'symbol') {
-      setPaint(layer, 'text-color', '#40372f');
-      setPaint(layer, 'text-halo-color', '#f3ecda');
-      setPaint(layer, 'text-halo-width', 1.1);
+      setPaint(layer, 'text-color', palette.label);
+      setPaint(layer, 'text-halo-color', palette.labelHalo);
+      setPaint(layer, 'text-halo-width', palette.labelHaloWidth ?? 1.1);
       setPaint(layer, 'text-halo-blur', 0.35);
     }
   }
@@ -168,6 +261,7 @@ export function initMvpMapSkinUi(): void {
     const option = document.createElement('option');
     option.value = skin.id;
     option.textContent = skin.label;
+    option.title = skin.description;
     select.append(option);
   }
   label.append(select);
@@ -175,7 +269,7 @@ export function initMvpMapSkinUi(): void {
   const hint = document.createElement('p');
   hint.className = 'hint';
   hint.dataset.mvpMapSkinControl = 'true';
-  hint.textContent = 'Experimental vector-map skin. Choosing a skin from a raster map automatically switches to OpenFreeMap Positron. No AI is used at runtime.';
+  hint.textContent = 'Deterministic vector-map skins. Choosing one from a raster map automatically switches to OpenFreeMap Positron. No AI is used at runtime.';
 
   const routeLabel = routeAppearance.closest('label');
   if (routeLabel) routeLabel.before(label, hint);
