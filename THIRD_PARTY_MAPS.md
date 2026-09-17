@@ -27,6 +27,18 @@ References:
 
 The app normalizes label fonts to common system fonts before applying MapLibre-style JSON through OpenLayers. This avoids the default `ol-mapbox-style` behavior of fetching web fonts from an unrelated font CDN. Sprites and map tile resources may still be requested from OpenFreeMap as part of rendering the selected map.
 
+## Local map skins
+
+The experimental map skins under `src/map/skins` are not additional map providers and do not introduce another external service. They are deterministic, client-side transformations applied to an already-loaded OpenFreeMap vector-style document.
+
+The skins may change visual paint properties such as background, land-use, water, roads and label colors. They do not replace or modify the underlying vector data, map sources, source-layer references, filters or GPX geometry.
+
+Accordingly, applying a skin does not change the underlying attribution or licensing requirements. A skinned OpenFreeMap map still uses OpenFreeMap/OpenMapTiles/OpenStreetMap data and must retain the same required attribution in publication exports.
+
+No AI or image-generation service is called when a user selects or exports a skin. The current skins are bundled application code and run locally in the browser. If AI is used during future design work to help author a skin, that design-time process is separate from runtime map rendering and does not affect the map provider's attribution requirements.
+
+Because the MVP skins operate on vector-style properties, selecting a skin while a raster basemap is active automatically switches to an OpenFreeMap vector style. Raster providers themselves are not restyled by the MVP skin system.
+
 ## OpenStreetMap standard raster tiles
 
 The OpenStreetMap raster source remains available with visible OpenStreetMap attribution. Publication export is enabled only with embedded attribution and ODbL notice information.
