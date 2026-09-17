@@ -23,14 +23,17 @@ describe('MVP vector map skins', () => {
           type: 'line',
           source: 'map',
           'source-layer': 'transportation',
+          minzoom: undefined,
+          maxzoom: undefined,
           filter: ['==', 'class', 'primary'],
+          layout: undefined,
           paint: { 'line-color': '#fff', 'line-width': 3 },
         },
       ],
-    } as Record<string, unknown>;
+    };
 
     setActiveMvpMapSkin('watercolor');
-    const skinned = applyActiveMvpMapSkin(sourceStyle) as typeof sourceStyle;
+    const skinned = applyActiveMvpMapSkin(sourceStyle as unknown as Record<string, unknown>) as unknown as typeof sourceStyle;
 
     expect(skinned).not.toBe(sourceStyle);
     expect(skinned.sources).toEqual(sourceStyle.sources);
@@ -54,8 +57,8 @@ describe('MVP vector map skins', () => {
       layout: layer.layout,
     })));
 
-    expect((skinned.layers[0].paint as Record<string, unknown>)['fill-color']).toBe('#9ebac6');
-    expect((skinned.layers[1].paint as Record<string, unknown>)['line-color']).not.toBe('#fff');
+    expect(skinned.layers[0].paint['fill-color']).toBe('#9ebac6');
+    expect(skinned.layers[1].paint['line-color']).not.toBe('#fff');
   });
 
   it('returns provider style unchanged when the skin is disabled', () => {
