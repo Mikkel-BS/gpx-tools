@@ -6,6 +6,8 @@ export interface MvpMapSkin {
   description: string;
 }
 
+export const DEFAULT_MVP_SKIN_VECTOR_PROVIDER_ID = 'openfreemap-positron';
+
 export const mvpMapSkins: MvpMapSkin[] = [
   {
     id: 'none',
@@ -51,6 +53,26 @@ export function setActiveMvpMapSkin(id: string): MvpMapSkin {
   const skin = getMvpMapSkin(id);
   activeSkinId = skin.id;
   return skin;
+}
+
+export function isVectorMapProviderId(providerId: string): boolean {
+  return providerId.startsWith('openfreemap-');
+}
+
+/**
+ * Pure interaction rule used by the UI and tests.
+ * Selecting a non-default skin from a raster map automatically moves to the
+ * default vector provider, because skins operate on vector-style paint values.
+ */
+export function resolveMvpSkinSelection(skinId: string, baseProviderId: string): {
+  skin: MvpMapSkin;
+  baseProviderId: string;
+} {
+  const skin = getMvpMapSkin(skinId);
+  if (skin.id !== 'none' && !isVectorMapProviderId(baseProviderId)) {
+    return { skin, baseProviderId: DEFAULT_MVP_SKIN_VECTOR_PROVIDER_ID };
+  }
+  return { skin, baseProviderId };
 }
 
 /**
@@ -129,7 +151,7 @@ export function applyActiveMvpMapSkin(style: Record<string, unknown>): Record<st
   return output;
 }
 
-function initMvpMapSkinUi(): void {
+export function initMvpMapSkinUi(): void {
   const mapControls = document.querySelector<HTMLElement>('.map-controls');
   const routeAppearance = document.querySelector<HTMLSelectElement>('#routeAppearance');
   const baseMap = document.querySelector<HTMLSelectElement>('#baseMap');
@@ -153,26 +175,28 @@ function initMvpMapSkinUi(): void {
   const hint = document.createElement('p');
   hint.className = 'hint';
   hint.dataset.mvpMapSkinControl = 'true';
-  hint.textContent = 'Experimental and vector-map only. Restyles existing map features deterministically; no AI is used at runtime.';
-
-  const syncAvailability = () => {
-    const vectorSelected = baseMap.value.startsWith('openfreemap-');
-    select.disabled = !vectorSelected;
-    label.title = vectorSelected ? '' : 'Choose an OpenFreeMap vector style to use an MVP skin.';
-  };
+  hint.textContent = 'Experimental vector-map skin. Choosing a skin from a raster map automatically switches to OpenFreeMap Positron. No AI is used at runtime.';
 
   const routeLabel = routeAppearance.closest('label');
   if (routeLabel) routeLabel.before(label, hint);
   else mapControls.append(label, hint);
 
   select.value = activeSkinId;
-  syncAvailability();
 
   select.addEventListener('change', () => {
-    setActiveMvpMapSkin(select.value);
-    if (baseMap.value.startsWith('openfreemap-')) baseMap.dispatchEvent(new Event('change'));
+    const resolved = resolveMvpSkinSelection(select.value, baseMap.value);
+    setActiveMvpMapSkin(resolved.skin.id);
+    select.value = resolved.skin.id;
+    if (baseMap.value !== resolved.baseProviderId) baseMap.value = resolved.baseProviderId;
+    if (isVectorMapProviderId(baseMap.value)) baseMap.dispatchEvent(new Event('change'));
   });
-  baseMap.addEventListener('change', syncAvailability);
+
+  baseMap.addEventListener('change', () => {
+    if (isVectorMapProviderId(baseMap.value)) return;
+    if (getActiveMvpMapSkin().id === 'none') return;
+    setActiveMvpMapSkin('none');
+    select.value = 'none';
+  });
 }
 
 if (typeof document !== 'undefined') {
