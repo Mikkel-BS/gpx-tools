@@ -216,15 +216,11 @@ export function initMvpMapDetailUi(): void {
 
   const syncAvailability = () => {
     const vectorSelected = isVectorDetailProviderId(baseMap.value);
-    select.disabled = !vectorSelected;
-    label.title = vectorSelected ? '' : 'Map detail profiles require an OpenFreeMap vector map.';
+    select.disabled = false;
+    label.title = vectorSelected ? '' : 'The selected detail profile is saved but only affects OpenFreeMap vector maps.';
     hint.textContent = vectorSelected
       ? 'Controls when vector-map details become visible without changing the selected map style.'
-      : 'Map detail profiles require an OpenFreeMap vector map. The selected map style will never be changed automatically.';
-    if (!vectorSelected && activeDetailId !== 'standard') {
-      setActiveMvpMapDetailProfile('standard');
-      select.value = 'standard';
-    }
+      : 'Selectable now, but inactive on this raster map. Your choice will apply when you select an OpenFreeMap vector map; Map Style is never changed automatically.';
   };
 
   const routeLabel = routeAppearance.closest('label');
@@ -236,8 +232,10 @@ export function initMvpMapDetailUi(): void {
 
   select.addEventListener('change', () => {
     setActiveMvpMapDetailProfile(select.value);
-    // Reload the same vector provider so its style is rebuilt with the new detail profile.
-    baseMap.dispatchEvent(new Event('change'));
+    // Reload only when the current provider is vector-capable. Raster maps keep
+    // their exact provider/style and simply remember the selected detail profile.
+    if (isVectorDetailProviderId(baseMap.value)) baseMap.dispatchEvent(new Event('change'));
+    syncAvailability();
   });
 
   baseMap.addEventListener('change', syncAvailability);
