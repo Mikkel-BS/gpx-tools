@@ -6,8 +6,6 @@ export interface MvpMapDetailProfile {
   description: string;
 }
 
-export const DEFAULT_MVP_DETAIL_VECTOR_PROVIDER_ID = 'openfreemap-positron';
-
 export const mvpMapDetailProfiles: MvpMapDetailProfile[] = [
   {
     id: 'standard',
@@ -35,6 +33,10 @@ let activeDetailId: MvpMapDetailId = 'standard';
 
 type JsonObject = Record<string, unknown>;
 
+function asObject(value: unknown): JsonObject {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
+}
+
 function fingerprint(layer: JsonObject): string {
   const id = typeof layer.id === 'string' ? layer.id : '';
   const sourceLayer = typeof layer['source-layer'] === 'string' ? layer['source-layer'] : '';
@@ -42,8 +44,110 @@ function fingerprint(layer: JsonObject): string {
 }
 
 function shiftMinzoom(layer: JsonObject, delta: number): void {
-  const current = typeof layer.minzoom === 'number' && Number.isFinite(layer.minzoom) ? layer.minzoom : 0;
-  layer.minzoom = Math.max(0, Math.min(24, current + delta));
+  if (typeof layer.minzoom !== 'number' || !Number.isFinite(layer.minzoom)) return;
+  layer.minzoom = Math.max(0, Math.min(24, layer.minzoom + delta));
+}
+
+function shiftZoomExpression(value: unknown, delta: number): unknown {
+  if (!Array.isArray(value)) return value;
+
+  // Mapbox expressions where numeric stops follow an explicit ["zoom"] input.
+  if ((value[0] === 'interpolate' || value[0] === 'step') && Array.isArray(value[2]) && value[2][0] === 'zoom') {
+    const output = structuredClone(value) as unknown[];
+    const firstStopIndex = value[0] === 'interpolate' ? 3 : 4;
+    for (let index = firstStopIndex; index < output.length; index += 2) {
+      if (typeof output[index] === 'number' && Number.isFinite(output[index])) {
+        output[index] = Math.max(0, Math.min(24, (output[index] as number) + delta));
+      }
+    }
+    return output;
+  }
+
+  return value.map((item) => shiftZoomExpression(item, delta));
+}
+
+function shiftLayerZoomStyling(layer: JsonObject, delta: number): void {
+  shiftMinzoom(layer, delta);
+
+  for (const propertyName of ['paint', 'layout'] as const) {
+    const source = asObject(layer[propertyName]);
+    if (!Object.keys(source).length) continue;
+    const shifted: JsonObject = {};
+    for (const [key, value] of Object.entries(source)) {
+      shifted[key] = shiftZoomExpression(value, delta);
+    }
+    layer[propertyName] = shifted;
+  }
+}
+
+function filterText(layer: JsonObject): string {
+  return JSON.stringify(layer.filter ?? '').toLowerCase();
+}
+
+function classMatches(layer: JsonObject, classes: string[]): boolean {
+  const text = filterText(layer);
+  return classes.some((value) => text.includes(`"${value}"`));
+}
+
+function isPathLayer(layer: JsonObject): boolean {
+  const fp = fingerprint(layer);
+  if (/path|trail|footway|cycleway|bridleway/.test(fp)) return true;
+  return layer['source-layer'] === 'transportation' && classMatches(layer, ['path', 'pedestrian', 'track']);
+}
+
+function isTrackLayer(layer: JsonObject): boolean {
+  return layer['source-layer'] === 'transportation' && classMatches(layer, ['track']);
+}
+
+function isWaterwayLayer(layer: JsonObject): boolean {
+  return layer['source-layer'] === 'waterway' || /stream|river|waterway|canal/.test(fingerprint(layer));
+}
+
+function isContourLayer(layer: JsonObject): boolean {
+  return /contour/.test(fingerprint(layer));
+}
+
+function isMajorRoadLayer(layer: JsonObject): boolean {
+  if (layer['source-layer'] !== 'transportation' && layer['source-layer'] !== 'transportation_name') return false;
+  return /motorway|trunk|primary|secondary/.test(fingerprint(layer))
+    || classMatches(layer, ['motorway', 'trunk', 'primary', 'secondary']);
+}
+
+function isMinorRoadLayer(layer: JsonObject): boolean {
+  if (layer['source-layer'] !== 'transportation' && layer['source-layer'] !== 'transportation_name') return false;
+  if (isMajorRoadLayer(layer) || isPathLayer(layer)) return false;
+  return /road|street|tertiary|service|minor/.test(fingerprint(layer))
+    || classMatches(layer, ['tertiary', 'minor', 'service', 'street']);
+}
+
+function detailShift(layer: JsonObject, profileId: MvpMapDetailId): number {
+  const type = typeof layer.type === 'string' ? layer.type : '';
+  const fp = fingerprint(layer);
+  const isSymbol = type === 'symbol';
+
+  if (profileId === 'hiking') {
+    if (isPathLayer(layer) || isTrackLayer(layer)) return -2;
+    if (isWaterwayLayer(layer) || isContourLayer(layer)) return -1;
+    if (isSymbol && /peak|mountain|natural|water|river|stream|trail|path/.test(fp)) return -1;
+    return 0;
+  }
+
+  if (profileId === 'road') {
+    if (isMajorRoadLayer(layer)) return -2;
+    if (isMinorRoadLayer(layer)) return -1;
+    if (isPathLayer(layer) || isTrackLayer(layer) || isContourLayer(layer)) return 1;
+    return 0;
+  }
+
+  if (profileId === 'minimal') {
+    if (isPathLayer(layer) || isTrackLayer(layer)) return 3;
+    if (isContourLayer(layer)) return 2;
+    if (isWaterwayLayer(layer)) return 1;
+    if (isMinorRoadLayer(layer)) return 2;
+    if (isSymbol && /poi|place_of_worship|shop|amenity|tourism|natural|peak/.test(fp)) return 2;
+  }
+
+  return 0;
 }
 
 export function getMvpMapDetailProfile(id: string): MvpMapDetailProfile {
@@ -64,23 +168,12 @@ export function isVectorDetailProviderId(providerId: string): boolean {
   return providerId.startsWith('openfreemap-');
 }
 
-export function resolveMvpDetailSelection(detailId: string, baseProviderId: string): {
-  profile: MvpMapDetailProfile;
-  baseProviderId: string;
-} {
-  const profile = getMvpMapDetailProfile(detailId);
-  if (profile.id !== 'standard' && !isVectorDetailProviderId(baseProviderId)) {
-    return { profile, baseProviderId: DEFAULT_MVP_DETAIL_VECTOR_PROVIDER_ID };
-  }
-  return { profile, baseProviderId };
-}
-
 /**
- * Adjusts only layer minzoom values. Sources, source-layer references, filters,
- * layout, paint, maxzoom and feature geometry are left unchanged.
+ * Applies a detail profile without changing the selected map provider.
  *
- * Lower minzoom means "eligible to appear earlier". Whether a feature is
- * actually available still depends on the underlying vector-tile data.
+ * For matching vector-style layers, it shifts explicit minzoom values and
+ * zoom stops inside paint/layout interpolate/step expressions. Feature data,
+ * sources, source-layer references and filters are never changed.
  */
 export function applyActiveMvpMapDetail(style: Record<string, unknown>): Record<string, unknown> {
   const profile = getActiveMvpMapDetailProfile();
@@ -90,33 +183,8 @@ export function applyActiveMvpMapDetail(style: Record<string, unknown>): Record<
   const layers = Array.isArray(output.layers) ? output.layers as JsonObject[] : [];
 
   for (const layer of layers) {
-    const type = typeof layer.type === 'string' ? layer.type : '';
-    const fp = fingerprint(layer);
-    const isSymbol = type === 'symbol';
-
-    if (profile.id === 'hiking') {
-      if (/path|track|trail|footway|cycleway|bridleway/.test(fp)) shiftMinzoom(layer, -2);
-      else if (/stream|river|waterway|canal/.test(fp)) shiftMinzoom(layer, -1);
-      else if (/contour/.test(fp)) shiftMinzoom(layer, -1);
-      else if (isSymbol && /peak|mountain|natural|water|river|stream|trail|path/.test(fp)) shiftMinzoom(layer, -1);
-      continue;
-    }
-
-    if (profile.id === 'road') {
-      if (/motorway|trunk|primary|secondary/.test(fp)) shiftMinzoom(layer, -2);
-      else if (/road|street|tertiary|service/.test(fp)) shiftMinzoom(layer, -1);
-      else if (isSymbol && /road|street|motorway|trunk|primary|secondary/.test(fp)) shiftMinzoom(layer, -1);
-      else if (/path|track|trail|footway|bridleway|contour/.test(fp)) shiftMinzoom(layer, 1);
-      continue;
-    }
-
-    if (profile.id === 'minimal') {
-      if (/path|track|trail|footway|cycleway|bridleway/.test(fp)) shiftMinzoom(layer, 3);
-      else if (/contour/.test(fp)) shiftMinzoom(layer, 2);
-      else if (/stream|river|waterway|canal/.test(fp)) shiftMinzoom(layer, 1);
-      else if (/road|street|tertiary|service/.test(fp) && !/motorway|trunk|primary|secondary/.test(fp)) shiftMinzoom(layer, 2);
-      else if (isSymbol && /poi|place_of_worship|shop|amenity|tourism|natural|peak/.test(fp)) shiftMinzoom(layer, 2);
-    }
+    const delta = detailShift(layer, profile.id);
+    if (delta !== 0) shiftLayerZoomStyling(layer, delta);
   }
 
   return output;
@@ -147,28 +215,34 @@ export function initMvpMapDetailUi(): void {
   const hint = document.createElement('p');
   hint.className = 'hint';
   hint.dataset.mvpMapDetailControl = 'true';
-  hint.textContent = 'Controls when vector-map details become visible. Choosing a non-standard profile from a raster map switches to OpenFreeMap Positron.';
+
+  const syncAvailability = () => {
+    const vectorSelected = isVectorDetailProviderId(baseMap.value);
+    select.disabled = !vectorSelected;
+    label.title = vectorSelected ? '' : 'Map detail profiles require an OpenFreeMap vector map.';
+    hint.textContent = vectorSelected
+      ? 'Controls when vector-map details become visible without changing the selected map style.'
+      : 'Map detail profiles require an OpenFreeMap vector map. The selected map style will never be changed automatically.';
+    if (!vectorSelected && activeDetailId !== 'standard') {
+      setActiveMvpMapDetailProfile('standard');
+      select.value = 'standard';
+    }
+  };
 
   const routeLabel = routeAppearance.closest('label');
   if (routeLabel) routeLabel.before(label, hint);
   else mapControls.append(label, hint);
 
   select.value = activeDetailId;
+  syncAvailability();
 
   select.addEventListener('change', () => {
-    const resolved = resolveMvpDetailSelection(select.value, baseMap.value);
-    setActiveMvpMapDetailProfile(resolved.profile.id);
-    select.value = resolved.profile.id;
-    if (baseMap.value !== resolved.baseProviderId) baseMap.value = resolved.baseProviderId;
-    if (isVectorDetailProviderId(baseMap.value)) baseMap.dispatchEvent(new Event('change'));
+    setActiveMvpMapDetailProfile(select.value);
+    // Reload the same vector provider so its style is rebuilt with the new detail profile.
+    baseMap.dispatchEvent(new Event('change'));
   });
 
-  baseMap.addEventListener('change', () => {
-    if (isVectorDetailProviderId(baseMap.value)) return;
-    if (getActiveMvpMapDetailProfile().id === 'standard') return;
-    setActiveMvpMapDetailProfile('standard');
-    select.value = 'standard';
-  });
+  baseMap.addEventListener('change', syncAvailability);
 }
 
 if (typeof document !== 'undefined') {
