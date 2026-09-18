@@ -72,6 +72,26 @@ describe('MVP map detail profiles', () => {
     ]);
   });
 
+  it('does not pull mixed minor/service/track layers forward just because their filter mentions track', () => {
+    setActiveMvpMapDetailProfile('hiking');
+    const source = {
+      version: 8,
+      layers: [{
+        id: 'highway_minor',
+        type: 'line',
+        source: 'openmaptiles',
+        'source-layer': 'transportation',
+        minzoom: 8,
+        filter: ['match', ['get', 'class'], ['minor', 'service', 'track'], true, false],
+        paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1.8, 20, 20] },
+      }],
+    };
+
+    const detailed = applyActiveMvpMapDetail(source as unknown as Record<string, unknown>) as unknown as typeof source;
+    expect(detailed.layers[0].minzoom).toBe(8);
+    expect(detailed.layers[0].paint).toEqual(source.layers[0].paint);
+  });
+
   it('does not mistake railway service layers for service roads', () => {
     setActiveMvpMapDetailProfile('road');
     const source = {
