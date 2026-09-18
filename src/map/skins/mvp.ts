@@ -5,7 +5,10 @@ export type MvpMapSkinId =
   | 'alpine-topo'
   | 'midnight-neon'
   | 'blueprint'
-  | 'autumn-field';
+  | 'autumn-field'
+  | 'nordic-winter'
+  | 'ink-wash'
+  | 'desert-sunset';
 
 interface MvpMapSkinPalette {
   background: string;
@@ -27,6 +30,10 @@ interface MvpMapSkinPalette {
   forestOpacity?: number;
   roadOpacity?: number;
   labelHaloWidth?: number;
+  waterOpacity?: number;
+  contourOpacity?: number;
+  boundaryOpacity?: number;
+  trailDash?: number[];
 }
 
 export interface MvpMapSkin {
@@ -113,6 +120,44 @@ export const mvpMapSkins: MvpMapSkin[] = [
       roadMinor: '#b97848', label: '#3d3329', labelHalo: '#efe5ce', forestOpacity: 0.8,
     },
   },
+  {
+    id: 'nordic-winter',
+    label: 'Nordic winter',
+    description: 'Snow-bright terrain, icy water, dark spruce and red winter-route accents.',
+    palette: {
+      background: '#f4f7f6', water: '#b8dbe8', waterLine: '#5c94aa', forest: '#6e8d7b',
+      urban: '#dfe6e4', building: '#aebdba', openLand: '#e8efec', contour: '#9ba9a5',
+      boundary: '#7b8d8b', trail: '#b6403b', roadMajor: '#f1d6a0', roadMajorCasing: '#7f7567',
+      roadMinor: '#c9c3b6', label: '#263537', labelHalo: '#f4f7f6', forestOpacity: 0.66,
+      waterOpacity: 0.96, contourOpacity: 0.42, trailDash: [3.5, 1.8], labelHaloWidth: 1.35,
+    },
+  },
+  {
+    id: 'ink-wash',
+    label: 'Ink wash',
+    description: 'Mostly monochrome brush-and-ink cartography with restrained blue-grey water.',
+    palette: {
+      background: '#f0eee8', water: '#c6d1d4', waterLine: '#67757a', forest: '#b8bbb3',
+      urban: '#d3d0c8', building: '#aaa69d', openLand: '#dad7cc', contour: '#77736b',
+      boundary: '#5f5b55', trail: '#35322f', roadMajor: '#d0c7b6', roadMajorCasing: '#47433e',
+      roadMinor: '#8c867d', label: '#242321', labelHalo: '#f0eee8', fillOpacity: 0.64,
+      forestOpacity: 0.58, roadOpacity: 0.86, waterOpacity: 0.82, contourOpacity: 0.68,
+      boundaryOpacity: 0.72, trailDash: [1.2, 1.5], labelHaloWidth: 1.25,
+    },
+  },
+  {
+    id: 'desert-sunset',
+    label: 'Desert sunset',
+    description: 'Sand, coral, turquoise and plum tones for a playful warm-climate poster-map look.',
+    palette: {
+      background: '#f3d8b6', water: '#67b7b2', waterLine: '#2e7777', forest: '#89935d',
+      urban: '#e7b49f', building: '#bb806d', openLand: '#e8bf78', contour: '#b76d52',
+      boundary: '#7d5264', trail: '#8e315c', roadMajor: '#f39855', roadMajorCasing: '#774637',
+      roadMinor: '#d58a62', label: '#4a2e3c', labelHalo: '#f3d8b6', fillOpacity: 0.78,
+      forestOpacity: 0.74, roadOpacity: 0.94, waterOpacity: 0.94, contourOpacity: 0.6,
+      boundaryOpacity: 0.62, trailDash: [4, 1.5], labelHaloWidth: 1.25,
+    },
+  },
 ];
 
 let activeSkinId: MvpMapSkinId = 'none';
@@ -192,7 +237,7 @@ export function applyActiveMvpMapSkin(style: Record<string, unknown>): Record<st
     if (type === 'fill') {
       if (/water|lake|ocean|sea/.test(fp)) {
         setPaint(layer, 'fill-color', palette.water);
-        setPaint(layer, 'fill-opacity', 0.92);
+        setPaint(layer, 'fill-opacity', palette.waterOpacity ?? 0.92);
       } else if (/wood|forest|landcover|park|nature|scrub|vegetation/.test(fp)) {
         setPaint(layer, 'fill-color', palette.forest);
         setPaint(layer, 'fill-opacity', forestOpacity);
@@ -215,14 +260,14 @@ export function applyActiveMvpMapSkin(style: Record<string, unknown>): Record<st
         setPaint(layer, 'line-opacity', 0.84);
       } else if (/contour/.test(fp)) {
         setPaint(layer, 'line-color', palette.contour);
-        setPaint(layer, 'line-opacity', 0.58);
+        setPaint(layer, 'line-opacity', palette.contourOpacity ?? 0.58);
       } else if (/boundary|admin/.test(fp)) {
         setPaint(layer, 'line-color', palette.boundary);
-        setPaint(layer, 'line-opacity', 0.58);
+        setPaint(layer, 'line-opacity', palette.boundaryOpacity ?? 0.58);
       } else if (/path|track|trail|footway|cycleway|bridleway/.test(fp)) {
         setPaint(layer, 'line-color', palette.trail);
         setPaint(layer, 'line-opacity', 0.86);
-        setPaint(layer, 'line-dasharray', [2.5, 2]);
+        setPaint(layer, 'line-dasharray', palette.trailDash ?? [2.5, 2]);
       } else if (/motorway|trunk|primary|secondary/.test(fp)) {
         setPaint(layer, 'line-color', /casing|outline/.test(fp) ? palette.roadMajorCasing : palette.roadMajor);
         setPaint(layer, 'line-opacity', roadOpacity);
