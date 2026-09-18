@@ -17,6 +17,9 @@ describe('MVP vector map skins', () => {
       'midnight-neon',
       'blueprint',
       'autumn-field',
+      'nordic-winter',
+      'ink-wash',
+      'desert-sunset',
     ]);
   });
 
@@ -96,6 +99,24 @@ describe('MVP vector map skins', () => {
       expect(skinned.layers[0].paint['fill-color']).not.toBe('#00f');
       expect(skinned.layers[1].paint['line-color']).not.toBe('#fff');
     }
+  });
+
+  it('supports per-skin line/fill treatment without touching geometry', () => {
+    setActiveMvpMapSkin('ink-wash');
+    const sourceStyle = {
+      version: 8,
+      layers: [
+        { id: 'contours', type: 'line', 'source-layer': 'contour', paint: { 'line-color': '#000' } },
+        { id: 'trail', type: 'line', 'source-layer': 'path', paint: { 'line-color': '#000' } },
+        { id: 'lake', type: 'fill', 'source-layer': 'water', paint: { 'fill-color': '#00f' } },
+      ],
+    } as unknown as Record<string, unknown>;
+    const skinned = applyActiveMvpMapSkin(sourceStyle) as unknown as {
+      layers: Array<{ paint: Record<string, unknown> }>;
+    };
+    expect(skinned.layers[0].paint['line-opacity']).toBe(0.68);
+    expect(skinned.layers[1].paint['line-dasharray']).toEqual([1.2, 1.5]);
+    expect(skinned.layers[2].paint['fill-opacity']).toBe(0.82);
   });
 
   it('makes the skins visually distinct at the palette level', () => {
