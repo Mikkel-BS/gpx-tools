@@ -90,13 +90,9 @@ function classMatches(layer: JsonObject, classes: string[]): boolean {
 }
 
 function isPathLayer(layer: JsonObject): boolean {
-  const fp = fingerprint(layer);
-  if (/path|trail|footway|cycleway|bridleway/.test(fp)) return true;
-  return layer['source-layer'] === 'transportation' && classMatches(layer, ['path', 'pedestrian', 'track']);
-}
-
-function isTrackLayer(layer: JsonObject): boolean {
-  return layer['source-layer'] === 'transportation' && classMatches(layer, ['track']);
+  const sourceLayer = layer['source-layer'];
+  if (sourceLayer !== 'transportation' && sourceLayer !== 'transportation_name') return false;
+  return /path|trail|footway|cycleway|bridleway|track/.test(fingerprint(layer));
 }
 
 function isWaterwayLayer(layer: JsonObject): boolean {
@@ -115,8 +111,10 @@ function isMajorRoadLayer(layer: JsonObject): boolean {
 
 function isMinorRoadLayer(layer: JsonObject): boolean {
   if (layer['source-layer'] !== 'transportation' && layer['source-layer'] !== 'transportation_name') return false;
+  const fp = fingerprint(layer);
+  if (/railway|rail/.test(fp) || classMatches(layer, ['rail'])) return false;
   if (isMajorRoadLayer(layer) || isPathLayer(layer)) return false;
-  return /road|street|tertiary|service|minor/.test(fingerprint(layer))
+  return /road|street|tertiary|service|minor/.test(fp)
     || classMatches(layer, ['tertiary', 'minor', 'service', 'street']);
 }
 
@@ -126,7 +124,7 @@ function detailShift(layer: JsonObject, profileId: MvpMapDetailId): number {
   const isSymbol = type === 'symbol';
 
   if (profileId === 'hiking') {
-    if (isPathLayer(layer) || isTrackLayer(layer)) return -2;
+    if (isPathLayer(layer)) return -2;
     if (isWaterwayLayer(layer) || isContourLayer(layer)) return -1;
     if (isSymbol && /peak|mountain|natural|water|river|stream|trail|path/.test(fp)) return -1;
     return 0;
@@ -135,12 +133,12 @@ function detailShift(layer: JsonObject, profileId: MvpMapDetailId): number {
   if (profileId === 'road') {
     if (isMajorRoadLayer(layer)) return -2;
     if (isMinorRoadLayer(layer)) return -1;
-    if (isPathLayer(layer) || isTrackLayer(layer) || isContourLayer(layer)) return 1;
+    if (isPathLayer(layer) || isContourLayer(layer)) return 1;
     return 0;
   }
 
   if (profileId === 'minimal') {
-    if (isPathLayer(layer) || isTrackLayer(layer)) return 3;
+    if (isPathLayer(layer)) return 3;
     if (isContourLayer(layer)) return 2;
     if (isWaterwayLayer(layer)) return 1;
     if (isMinorRoadLayer(layer)) return 2;
