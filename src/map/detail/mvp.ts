@@ -68,7 +68,7 @@ function isPoiLayer(layer: JsonObject): boolean {
   const fp = fingerprint(layer);
   const sourceLayer = layer['source-layer'];
   return sourceLayer === 'poi'
-    || /poi|shop|amenity|tourism|place_of_worship|airport|aerodrome/.test(fp);
+    || /(^|[_ -])(poi|shop|amenity|tourism|place_of_worship|airport|aerodrome)([_ -]|$)/.test(fp);
 }
 
 function isPathLayer(layer: JsonObject): boolean {
