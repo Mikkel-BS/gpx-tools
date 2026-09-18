@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyActiveMvpMapDetail,
+  getActiveMvpMapDetailProfile,
   isVectorDetailProviderId,
   mvpMapDetailProfiles,
   setActiveMvpMapDetailProfile,
@@ -20,6 +21,14 @@ describe('MVP map detail profiles', () => {
     expect(isVectorDetailProviderId('osm')).toBe(false);
     expect(isVectorDetailProviderId('openfreemap-positron')).toBe(true);
     expect(isVectorDetailProviderId('openfreemap-fiord')).toBe(true);
+  });
+
+  it('retains a chosen detail profile independently of the current provider', () => {
+    expect(isVectorDetailProviderId('osm')).toBe(false);
+    setActiveMvpMapDetailProfile('hiking');
+    expect(getActiveMvpMapDetailProfile().id).toBe('hiking');
+    setActiveMvpMapDetailProfile('minimal');
+    expect(getActiveMvpMapDetailProfile().id).toBe('minimal');
   });
 
   it('shifts real Positron-style path zoom expressions in hiking mode', () => {
