@@ -1,3 +1,4 @@
+import { applyActiveMvpMapDetail } from '../detail/mvp';
 import { applyActiveMvpMapSkin } from '../skins/mvp';
 
 export type VectorStylePublicationPolicy = 'allowed-with-attribution' | 'blocked-review';
@@ -88,7 +89,8 @@ export async function loadVectorStyle(provider: VectorStyleProvider): Promise<Re
   const response = await fetch(provider.styleUrl, { mode: 'cors', credentials: 'omit' });
   if (!response.ok) throw new Error(`Could not load ${provider.label} (${response.status}).`);
   const sourceStyle = await response.json() as Record<string, unknown>;
-  const style = applyActiveMvpMapSkin(sourceStyle);
+  const detailedStyle = applyActiveMvpMapDetail(sourceStyle);
+  const style = applyActiveMvpMapSkin(detailedStyle);
   const layers = Array.isArray(style.layers) ? style.layers as Array<Record<string, unknown>> : [];
   for (const layer of layers) {
     const layout = layer.layout;
