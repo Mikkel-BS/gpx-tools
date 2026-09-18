@@ -74,8 +74,7 @@ function isPoiLayer(layer: JsonObject): boolean {
 function isPathLayer(layer: JsonObject): boolean {
   const sourceLayer = layer['source-layer'];
   if (sourceLayer !== 'transportation' && sourceLayer !== 'transportation_name') return false;
-  return /path|trail|footway|cycleway|bridleway/.test(fingerprint(layer))
-    || classMatches(layer, ['path', 'pedestrian']);
+  return /path|trail|footway|cycleway|bridleway|pedestrian/.test(fingerprint(layer));
 }
 
 function isTrackOnlyLayer(layer: JsonObject): boolean {
@@ -109,8 +108,7 @@ function isPathLabel(layer: JsonObject): boolean {
 function isMajorRoadLayer(layer: JsonObject): boolean {
   const sourceLayer = layer['source-layer'];
   if (sourceLayer !== 'transportation' && sourceLayer !== 'transportation_name') return false;
-  return /motorway|trunk|primary|secondary/.test(fingerprint(layer))
-    || classMatches(layer, ['motorway', 'trunk', 'primary', 'secondary']);
+  return /motorway|trunk|primary|secondary/.test(fingerprint(layer));
 }
 
 function isMinorRoadLayer(layer: JsonObject): boolean {
@@ -119,8 +117,7 @@ function isMinorRoadLayer(layer: JsonObject): boolean {
   const fp = fingerprint(layer);
   if (/railway|rail/.test(fp) || classMatches(layer, ['rail'])) return false;
   if (isMajorRoadLayer(layer) || isPathLayer(layer) || isTrackOnlyLayer(layer)) return false;
-  return /road|street|tertiary|service|minor|residential/.test(fp)
-    || classMatches(layer, ['tertiary', 'minor', 'service', 'street', 'residential']);
+  return /road|street|tertiary|service|minor|residential/.test(fp);
 }
 
 function isPlaceLabel(layer: JsonObject): boolean {
